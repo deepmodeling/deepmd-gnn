@@ -17,6 +17,7 @@ from deepmd.pt.model.model.model import (
 )
 from deepmd.pt.model.model.transform_output import (
     communicate_extended_output,
+    fit_output_to_model_output,
 )
 from deepmd.pt.utils import env
 from deepmd.pt.utils.nlist import (
@@ -659,7 +660,7 @@ class MaceModel(BaseModel):
         mapping: Optional[torch.Tensor] = None,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
-        do_atomic_virial: bool = False,  # noqa: ARG002
+        do_atomic_virial: bool = False,
         comm_dict: Optional[dict[str, torch.Tensor]] = None,
     ) -> dict[str, torch.Tensor]:
         """Forward lower common pass of the model.
@@ -788,39 +789,18 @@ class MaceModel(BaseModel):
         if atom_energy is None:
             msg = "atom_energy is None"
             raise ValueError(msg)
-        atom_energy = atom_energy.view(nf, nall).to(extended_coord_.dtype)[:, :nloc]
-        energy = torch.sum(atom_energy, dim=1).view(nf, 1).to(extended_coord_.dtype)
-        grad_outputs: list[Optional[torch.Tensor]] = [
-            torch.ones_like(energy),
-        ]
-        force = torch.autograd.grad(
-            outputs=[energy],
-            inputs=[extended_coord_ff],
-            grad_outputs=grad_outputs,
-            retain_graph=True,
+        atom_energy = atom_energy.view(nf, nall, 1)
+        atom_energy = atom_energy[:, :nloc, :]
+        model_ret = fit_output_to_model_output(
+            {"energy": atom_energy.to(extended_coord_.dtype)},
+            self.fitting_output_def(),
+            extended_coord_ff.view(nf, nall, 3),
+            do_atomic_virial=do_atomic_virial,
             create_graph=self.training,
-        )[0]
-        if force is None:
-            msg = "force is None"
-            raise ValueError(msg)
-        force = -force
-        atomic_virial = force.unsqueeze(-1).to(
-            extended_coord_.dtype,
-        ) @ extended_coord_ff.unsqueeze(-2).to(
-            extended_coord_.dtype,
         )
-        force = force.view(nf, nall, 3).to(extended_coord_.dtype)
-        atomic_virial = atomic_virial.view(nf, nall, 1, 9)
-        virial = torch.sum(atomic_virial, dim=1).view(nf, 9).to(extended_coord_.dtype)
 
         return {
-            "energy_redu": energy.view(nf, 1),
-            "energy_derv_r": force.view(nf, nall, 1, 3),
-            "energy_derv_c_redu": virial.view(nf, 1, 9),
-            # take the first nloc atoms to match other models
-            "energy": atom_energy.view(nf, nloc, 1),
-            # fake atom_virial
-            "energy_derv_c": atomic_virial.view(nf, nall, 1, 9),
+            kk: vv.to(extended_coord_.dtype) for kk, vv in model_ret.items()
         }
 
     def serialize(self) -> dict:
