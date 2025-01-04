@@ -6,6 +6,7 @@ Table of contents
 .. toctree::
    :maxdepth: 2
 
+   Overview <index>
    parameters
    Python API <autoapi/deepmd-gnn/index>
 
