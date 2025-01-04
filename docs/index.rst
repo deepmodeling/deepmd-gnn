@@ -7,7 +7,7 @@ Table of contents
    :maxdepth: 2
 
    parameters
-   Python API <autoapi/deepmd-gnn/index> 
+   Python API <autoapi/deepmd-gnn/index>
 
 Indices and tables
 ==================
