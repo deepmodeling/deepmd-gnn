@@ -51,8 +51,6 @@ test = [
     'pytest-cov',
     "dargs>=0.4.8",
 ]
-
-[dependency-groups]
 docs = [
     "sphinx",
     "myst-parser",
