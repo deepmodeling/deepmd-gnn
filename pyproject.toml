@@ -51,6 +51,14 @@ test = [
     'pytest-cov',
     "dargs>=0.4.8",
 ]
+docs = [
+    "sphinx",
+    "sphinx-autoapi",
+    "myst-parser",
+    "deepmodeling-sphinx>=0.3.0",
+    "sphinx-book-theme",
+    "dargs",
+]
 
 [tool.scikit-build]
 wheel.py-api = "py2.py3"
@@ -95,6 +103,10 @@ convention = "numpy"
     "ANN",
     "D101",
     "D102",
+]
+"docs/conf.py" = [
+    "ERA001",
+    "INP001",
 ]
 
 [tool.coverage.report]
