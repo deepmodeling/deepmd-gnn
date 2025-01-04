@@ -31,7 +31,7 @@ get_requires_for_build_editable = _orig.get_requires_for_build_editable
 
 
 def cibuildwheel_dependencies() -> list[str]:
-    if os.environ.get("CIBUILDWHEEL", "0") == "1":
+    if os.environ.get("CIBUILDWHEEL", "0") == "1" or os.environ.get("READTHEDOCS", "0") == "1":
         return [
             "deepmd-kit[torch]>=3.0.0b2",
         ]
