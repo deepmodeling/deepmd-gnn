@@ -53,6 +53,7 @@ test = [
 ]
 docs = [
     "sphinx",
+    "sphinx-autoapi",
     "myst-parser",
     "deepmodeling-sphinx>=0.3.0",
     "sphinx-book-theme",
