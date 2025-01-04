@@ -123,3 +123,4 @@ intersphinx_mapping = {
     "deepmd": ("https://docs.deepmodeling.com/projects/deepmd/", None),
     "torch": ("https://pytorch.org/docs/stable/", None),
 }
+autoapi_dirs = ["deepmd_gnn"]
