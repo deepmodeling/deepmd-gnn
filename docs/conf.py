@@ -34,7 +34,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
     # "sphinxarg.ext",
-    "myst_nb",
+    "myst_parser",
     # "sphinx_favicon",
     "deepmodeling_sphinx",
     "dargs.sphinx",
