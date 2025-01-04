@@ -105,6 +105,10 @@ convention = "numpy"
     "D101",
     "D102",
 ]
+"docs/conf.py" = [
+    "ERA001",
+    "INP001",
+]
 
 [tool.coverage.report]
 include = ["deepmd_gnn/*"]

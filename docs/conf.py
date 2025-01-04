@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 # -- Project information -----------------------------------------------------
 
 project = "DeePMD-GNN"
-copyright = f"2024-{datetime.now(tz=timezone.utc).year}, DeepModeling"
+copyright = f"2024-{datetime.now(tz=timezone.utc).year}, DeepModeling"  # noqa: A001
 author = "Jinzhe Zeng"
 
 
