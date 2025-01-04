@@ -60,7 +60,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 html_theme = "pydata_sphinx_theme"
 # html_logo = "_static/logo.svg"
 html_static_path = ["_static"]
-html_js_files = []
+html_js_files: list[str] = []
 html_css_files = ["css/custom.css"]
 html_extra_path = ["report.html", "fire.png", "bundle.js", "bundle.css"]
 
