@@ -316,7 +316,7 @@ class ModelTestCase:
             )
 
             subret = [rr[kk] for rr in ret if rr is not None]
-            if len(subret):
+            if subret:
                 for ii, rr in enumerate(subret[1:]):
                     if subret[0] is None:
                         assert rr is None
@@ -1013,7 +1013,7 @@ class ModelTestCase:
             ret.append(module(**input_dict))
         for kk in ret[0]:
             subret = [rr[kk] for rr in ret if rr is not None]
-            if len(subret):
+            if subret:
                 for ii, rr in enumerate(subret[1:]):
                     if subret[0] is None:
                         assert rr is None
