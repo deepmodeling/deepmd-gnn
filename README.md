@@ -14,11 +14,9 @@ You can follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects
 
 ## Credits
 
-If you use this software, please cite the following unpublish paper:
+If you use this software, please cite the following paper:
 
-- Jinzhe Zeng, Timothy J. Giese, Duo Zhang, Han Wang, Darrin M. York, DeePMD-GNN: A DeePMD-kit Plugin for External Graph Neural Network Potentials, unpublished.
-
-We will update the credit information once it is published.
+- Jinzhe Zeng, Timothy J. Giese, Duo Zhang, Han Wang, Darrin M. York, DeePMD-GNN: A DeePMD-kit Plugin for External Graph Neural Network Potentials, _J. Chem. Inf. Model._, 2025 (in press).
 
 ## Installation
 
