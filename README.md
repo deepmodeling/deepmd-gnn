@@ -1,6 +1,8 @@
 # DeePMD-kit plugin for various graph neural network models
 
-<!-- [![PyPI - Version](https://img.shields.io/pypi/v/python-template)](https://pypi.org/p/python-template) -->
+[![DOI:10.1021/acs.jcim.4c02441](https://img.shields.io/badge/DOI-10.1021%2Facs.jcim.4c02441-blue)](https://doi.org/10.1021/acs.jcim.4c02441)
+[![Citations](https://citations.njzjz.win/10.1021/acs.jcim.4c02441)](https://doi.org/10.1021/acs.jcim.4c02441)
+[![PyPI - Version](https://img.shields.io/pypi/v/deepmd-gnn)](https://pypi.org/p/deepmd-gnn)
 
 `deepmd-gnn` is a [DeePMD-kit](https://github.com/deepmodeling/deepmd-kit) plugin for various graph neural network (GNN) models, which connects DeePMD-kit and atomistic GNN packages by enabling GNN models in DeePMD-kit.
 
@@ -16,7 +18,7 @@ You can follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects
 
 If you use this software, please cite the following paper:
 
-- Jinzhe Zeng, Timothy J. Giese, Duo Zhang, Han Wang, Darrin M. York, DeePMD-GNN: A DeePMD-kit Plugin for External Graph Neural Network Potentials, _J. Chem. Inf. Model._, 2025 (in press).
+- Jinzhe Zeng, Timothy J. Giese, Duo Zhang, Han Wang, Darrin M. York, DeePMD-GNN: A DeePMD-kit Plugin for External Graph Neural Network Potentials, _J. Chem. Inf. Model._, 2025, DOI: [10.1021/acs.jcim.4c02441](https://doi.org/10.1021/acs.jcim.4c02441). [![Citations](https://citations.njzjz.win/10.1021/acs.jcim.4c02441)](https://badge.dimensions.ai/details/doi/10.1021/acs.jcim.4c02441)
 
 ## Installation
 
