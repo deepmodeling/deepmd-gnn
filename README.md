@@ -2,6 +2,7 @@
 
 [![DOI:10.1021/acs.jcim.4c02441](https://img.shields.io/badge/DOI-10.1021%2Facs.jcim.4c02441-blue)](https://doi.org/10.1021/acs.jcim.4c02441)
 [![Citations](https://citations.njzjz.win/10.1021/acs.jcim.4c02441)](https://doi.org/10.1021/acs.jcim.4c02441)
+[![conda install](https://img.shields.io/conda/dn/conda-forge/deepmd-gnn?label=conda%20install)](https://anaconda.org/conda-forge/deepmd-gnn)
 [![PyPI - Version](https://img.shields.io/pypi/v/deepmd-gnn)](https://pypi.org/p/deepmd-gnn)
 
 `deepmd-gnn` is a [DeePMD-kit](https://github.com/deepmodeling/deepmd-kit) plugin for various graph neural network (GNN) models, which connects DeePMD-kit and atomistic GNN packages by enabling GNN models in DeePMD-kit.
@@ -22,6 +23,17 @@ If you use this software, please cite the following paper:
 
 ## Installation
 
+### Install via conda
+
+If you are in a [conda environment](https://docs.deepmodeling.com/faq/conda.html) where DeePMD-kit is already installed from the conda-forge channel,
+you can use `conda` to install the DeePMD-GNN plugin:
+
+```sh
+conda install deepmd-gnn -c conda-forge
+```
+
+### Build from source
+
 First, clone this repository:
 
 ```sh
@@ -29,7 +41,7 @@ git clone https://gitlab.com/RutgersLBSR/deepmd-gnn
 cd deepmd-gnn
 ```
 
-### Python interface plugin
+#### Python interface plugin
 
 Python 3.9 or above is required. A C++ compiler that supports C++ 14 (for PyTorch 2.0) or C++ 17 (for PyTorch 2.1 or above) is required.
 
@@ -42,7 +54,7 @@ export CMAKE_PREFIX_PATH=$(python -c "import torch;print(torch.utils.cmake_prefi
 pip install .
 ```
 
-### C++ interface plugin
+#### C++ interface plugin
 
 DeePMD-kit version should be v3.0.0b4 or later.
 
