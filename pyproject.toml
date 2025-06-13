@@ -10,7 +10,7 @@ name = "deepmd-gnn"
 dynamic = ["version"]
 description = "DeePMD-kit plugin for graph neural network models."
 authors = [
-    { name = "Jinzhe Zeng", email = "jinzhe.zeng@rutgers.edu"},
+    { name = "Jinzhe Zeng", email = "jinzhe.zeng@ustc.edu.cn"},
 ]
 license = { file = "LICENSE" }
 classifiers = [
