@@ -5,7 +5,7 @@ import os
 from ._version import __version__
 from .argcheck import mace_model_args
 
-__email__ = "jinzhe.zeng@rutgers.edu"
+__email__ = "jinzhe.zeng@ustc.edu.cn"
 
 __all__ = [
     "__version__",
