@@ -23,6 +23,9 @@ from deepmd.pt.utils.utils import (
     to_numpy_array,
     to_torch_tensor,
 )
+from scipy.stats import (
+    special_ortho_group,
+)
 
 from deepmd_gnn.mace import MaceModel
 from deepmd_gnn.nequip import NequipModel
@@ -545,9 +548,6 @@ class ModelTestCase:
         spin = 0.1 * rng.random([natoms, 3])
         atype = np.array([0, 0, 0, 1, 1])
         shift = np.array([4.0, 4.0, 4.0])
-        from scipy.stats import (
-            special_ortho_group,
-        )
 
         rmat = special_ortho_group.rvs(3)
         coord_rot = np.matmul(coord, rmat)
