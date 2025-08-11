@@ -331,7 +331,7 @@ class ModelTestCase:
             for rr in ret_lower:
                 if rr is not None:
                     subret.append(rr[kk])
-            if len(subret):
+            if subret:
                 for ii, rr in enumerate(subret[1:]):
                     if kk == "expanded_force":
                         # use mapping to scatter sum the forces
