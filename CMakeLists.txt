@@ -62,9 +62,9 @@ else()
      AND Torch_VERSION VERSION_GREATER_EQUAL "2.8.0")
     # https://github.com/deepmodeling/deepmd-kit/issues/4877
     # torch.compiled_with_cxx11_abi in PyTorch 2.8 always return True
-    set(OP_CXX_ABI 1)
+    set(OP_CXX_ABI_PT 1)
   else()
-    set(OP_CXX_ABI 0)
+    set(OP_CXX_ABI_PT 0)
   endif()
 endif()
 
