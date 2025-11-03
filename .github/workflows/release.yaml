@@ -13,9 +13,9 @@ jobs:
     name: Build and upload distributions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -39,6 +39,10 @@ jobs:
           - os: ubuntu-latest
             python: 312
             platform_id: manylinux_x86_64
+          # linux-aarch64
+          - os: ubuntu-24.04-arm
+            python: 312
+            platform_id: manylinux_aarch64
           # macos-x86-64
           - os: macos-13
             python: 312
@@ -48,13 +52,13 @@ jobs:
             python: 312
             platform_id: macosx_arm64
           # win-64
-          - os: windows-2019
+          - os: windows-2022
             python: 312
             platform_id: win_amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -62,7 +66,7 @@ jobs:
             **/pyproject.toml
         if: runner.os != 'Linux'
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.22
+        uses: pypa/cibuildwheel@v3.2
         env:
           CIBW_ARCHS: all
           CIBW_BUILD: cp${{ matrix.python }}-${{ matrix.platform_id }}
@@ -85,7 +89,7 @@ jobs:
       id-token: write
     steps:
       - name: Retrieve release distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           merge-multiple: true
           pattern: release-*

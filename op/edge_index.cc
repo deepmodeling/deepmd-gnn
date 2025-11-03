@@ -3,9 +3,9 @@
 
 #include <iostream>
 
-torch::Tensor edge_index_kernel(const torch::Tensor &nlist_tensor,
-                                const torch::Tensor &atype_tensor,
-                                const torch::Tensor &mm_tensor) {
+torch::Tensor edge_index_kernel(const torch::Tensor& nlist_tensor,
+                                const torch::Tensor& atype_tensor,
+                                const torch::Tensor& mm_tensor) {
   torch::Tensor nlist_tensor_ = nlist_tensor.cpu().contiguous();
   torch::Tensor atype_tensor_ = atype_tensor.cpu().contiguous();
   torch::Tensor mm_tensor_ = mm_tensor.cpu().contiguous();
@@ -33,9 +33,9 @@ torch::Tensor edge_index_kernel(const torch::Tensor &nlist_tensor,
   }
   const int64_t nall = atype_tensor_.size(1);
   const int64_t nmm = mm_tensor_.size(0);
-  int64_t *nlist = nlist_tensor_.view({-1}).data_ptr<int64_t>();
-  int64_t *atype = atype_tensor_.view({-1}).data_ptr<int64_t>();
-  int64_t *mm = mm_tensor_.view({-1}).data_ptr<int64_t>();
+  int64_t* nlist = nlist_tensor_.view({-1}).data_ptr<int64_t>();
+  int64_t* atype = atype_tensor_.view({-1}).data_ptr<int64_t>();
+  int64_t* mm = mm_tensor_.view({-1}).data_ptr<int64_t>();
 
   std::vector<int64_t> edge_index;
   edge_index.reserve(nf * nloc * nnei * 2);

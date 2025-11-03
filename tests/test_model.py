@@ -23,6 +23,9 @@ from deepmd.pt.utils.utils import (
     to_numpy_array,
     to_torch_tensor,
 )
+from scipy.stats import (
+    special_ortho_group,
+)
 
 from deepmd_gnn.mace import MaceModel
 from deepmd_gnn.nequip import NequipModel
@@ -226,7 +229,7 @@ class ModelTestCase:
         atype = np.array([[0, 0, 0, 1, 1] * nf], dtype=int).reshape([nf, -1])
         spin = 0.5 * rng.random([1, natoms, 3]).repeat(nf, 0).reshape([nf, -1])
         cell = 6.0 * np.repeat(np.eye(3)[None, ...], nf, axis=0).reshape([nf, 9])
-        coord_ext, atype_ext, mapping, nlist = extend_input_and_build_neighbor_list(
+        _coord_ext, _atype_ext, mapping, _nlist = extend_input_and_build_neighbor_list(
             coord,
             atype,
             self.expected_rcut + 1.0 if test_spin else self.expected_rcut,
@@ -316,7 +319,7 @@ class ModelTestCase:
             )
 
             subret = [rr[kk] for rr in ret if rr is not None]
-            if len(subret):
+            if subret:
                 for ii, rr in enumerate(subret[1:]):
                     if subret[0] is None:
                         assert rr is None
@@ -331,7 +334,7 @@ class ModelTestCase:
             for rr in ret_lower:
                 if rr is not None:
                     subret.append(rr[kk])
-            if len(subret):
+            if subret:
                 for ii, rr in enumerate(subret[1:]):
                     if kk == "expanded_force":
                         # use mapping to scatter sum the forces
@@ -545,9 +548,6 @@ class ModelTestCase:
         spin = 0.1 * rng.random([natoms, 3])
         atype = np.array([0, 0, 0, 1, 1])
         shift = np.array([4.0, 4.0, 4.0])
-        from scipy.stats import (
-            special_ortho_group,
-        )
 
         rmat = special_ortho_group.rvs(3)
         coord_rot = np.matmul(coord, rmat)
@@ -1013,7 +1013,7 @@ class ModelTestCase:
             ret.append(module(**input_dict))
         for kk in ret[0]:
             subret = [rr[kk] for rr in ret if rr is not None]
-            if len(subret):
+            if subret:
                 for ii, rr in enumerate(subret[1:]):
                     if subret[0] is None:
                         assert rr is None
