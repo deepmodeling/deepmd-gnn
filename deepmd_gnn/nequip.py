@@ -536,7 +536,7 @@ class NequipModel(BaseModel):
             shifts = shifts_atoms[edge_index[1]] - shifts_atoms[edge_index[0]]
             edge_index = mapping_ff[edge_index]
             input_dict["edge_index"] = edge_index
-            rec_cell, _ = torch.linalg.inv_ex(box.view(nf, 3, 3))
+            rec_cell, _ = torch.linalg.inv_ex(box_ff.view(nf, 3, 3))
             edge_cell_shift = torch.einsum(
                 "ni,nij->nj",
                 shifts,
