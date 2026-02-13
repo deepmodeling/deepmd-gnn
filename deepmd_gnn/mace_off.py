@@ -107,7 +107,7 @@ def load_mace_off_model(
     model_name: str = "small",
     cache_dir: Optional[Path] = None,
     device: str = "cpu",
-) -> "MaceModel":
+) -> MaceModel:
     """Load a MACE-OFF pretrained model as a DeePMD-GNN MaceModel.
 
     This function downloads a MACE-OFF pretrained model and wraps it
@@ -178,6 +178,24 @@ def load_mace_off_model(
     
     # Helper function to get attribute with default and warning
     def get_attr_with_default(obj, attr, default, warn=True):
+        """Get attribute from object with default value and optional warning.
+        
+        Parameters
+        ----------
+        obj : object
+            Object to get attribute from
+        attr : str
+            Attribute name
+        default : any
+            Default value if attribute not found
+        warn : bool, optional
+            Whether to print warning when using default
+            
+        Returns
+        -------
+        value
+            Attribute value or default
+        """
         value = getattr(obj, attr, None)
         if value is None:
             if warn:
@@ -192,12 +210,11 @@ def load_mace_off_model(
     correlation = get_attr_with_default(mace_model, 'correlation', 3)
     radial_MLP = get_attr_with_default(mace_model, 'radial_MLP', [64, 64, 64])
     
-    hidden_irreps = (
-        str(mace_model.hidden_irreps) 
-        if hasattr(mace_model, 'hidden_irreps') 
-        else "128x0e + 128x1o"
-    )
-    if not hasattr(mace_model, 'hidden_irreps'):
+    # Get hidden_irreps with validation
+    if hasattr(mace_model, 'hidden_irreps') and mace_model.hidden_irreps is not None:
+        hidden_irreps = str(mace_model.hidden_irreps)
+    else:
+        hidden_irreps = "128x0e + 128x1o"
         print("Warning: Using default hidden_irreps (not found in model)")
     
     # Determine interaction class name
