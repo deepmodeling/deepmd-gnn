@@ -102,10 +102,10 @@ class SanderInterface:
         Returns
         -------
         energy : float
-            Total QM energy in eV (or kcal/mol depending on model units)
+            Total QM energy in the model's native units (typically eV for MACE models)
         forces : np.ndarray
-            Atomic forces in eV/Angstrom, shape (natoms, 3)
-            Only QM atoms will have non-zero forces in QM/MM mode
+            Atomic forces in the model's native units (typically eV/Angstrom for MACE),
+            shape (natoms, 3). Only QM atoms will have non-zero forces in QM/MM mode
 
         Notes
         -----
@@ -113,6 +113,8 @@ class SanderInterface:
         - MM atoms (types starting with 'm' or HW/OW) get zero energy bias
         - Forces are computed for all atoms but MM-MM interactions are excluded
         - The energy includes QM-QM and QM-MM interactions only
+        - Energy and force units depend on the model; MACE models typically use
+          eV for energy and eV/Angstrom for forces
         """
         # Ensure inputs are numpy arrays
         coordinates = np.asarray(coordinates, dtype=self.np_dtype)
@@ -260,9 +262,10 @@ def compute_qm_energy_sander(
     Returns
     -------
     energy : float
-        Total QM energy
+        Total QM energy in the model's native units (typically eV for MACE)
     forces : np.ndarray
-        Atomic forces, shape (natoms, 3)
+        Atomic forces in the model's native units (typically eV/Angstrom for MACE),
+        shape (natoms, 3)
     """
     interface = SanderInterface(model_file)
     return interface.compute_qm_correction(coordinates, atom_types, box)

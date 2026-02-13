@@ -110,8 +110,10 @@ For QM/MM simulations, the **small** model is recommended for a good balance of 
 - MACE-OFF models are pretrained on diverse molecular datasets
 - QM/MM boundary is automatically handled by the DPRc mechanism
 - Forces on MM atoms from QM interactions are computed automatically
-- Energy units: typically eV (check model documentation)
-- Force units: typically eV/Angstrom
+- Energy and force units depend on the model:
+  - MACE models typically use eV for energy
+  - MACE models typically use eV/Angstrom for forces
+  - Check your specific model's documentation for exact units
 
 ## References
 

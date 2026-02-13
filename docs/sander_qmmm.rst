@@ -137,8 +137,13 @@ Notes
 * MACE-OFF models are pretrained on diverse molecular datasets
 * QM/MM boundary is handled automatically via DPRc mechanism
 * Forces on MM atoms from QM interactions are computed automatically
-* Default units: energy in eV, forces in eV/Angstrom
-* Coordinates in Angstroms
+* Energy and force units depend on the model:
+
+  - MACE models typically use eV for energy
+  - MACE models typically use eV/Angstrom for forces
+  - Check your specific model's documentation for exact units
+
+* Coordinates are always in Angstroms
 
 References
 ----------

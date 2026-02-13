@@ -99,8 +99,11 @@ def main():
 
     print(f"\nSystem details:")
     print(f"  Total atoms: {len(atom_types)}")
-    print(f"  QM atoms: {np.sum(atom_types < len(interface.mm_type_indices))}")
-    print(f"  MM atoms: {np.sum(atom_types >= len(interface.mm_type_indices))}")
+    # Count QM atoms (those not in MM type indices)
+    qm_count = np.sum(~np.isin(atom_types, interface.mm_type_indices))
+    mm_count = np.sum(np.isin(atom_types, interface.mm_type_indices))
+    print(f"  QM atoms: {qm_count}")
+    print(f"  MM atoms: {mm_count}")
 
     # Compute QM energy correction
     print("\nComputing QM energy correction...")
