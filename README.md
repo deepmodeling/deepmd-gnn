@@ -204,6 +204,7 @@ convert_mace_off_to_deepmd("small", "frozen_model.pth")
 ```
 
 The frozen model can be used with:
+
 - **LAMMPS**: Set `DP_PLUGIN_PATH` and use `pair_style deepmd`
 - **AMBER/sander**: Through DeePMD-kit's AMBER interface (supports QM/MM with DPRc)
 - **Other MD packages**: Through DeePMD-kit's C++ interface

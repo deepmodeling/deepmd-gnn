@@ -7,7 +7,7 @@ import sys
 from deepmd_gnn import convert_mace_off_to_deepmd, load_mace_off_model
 
 
-def main():
+def main() -> int:
     """Load and convert MACE-OFF model."""
     print("=" * 70)
     print("MACE-OFF Model Loading Example")
@@ -19,7 +19,7 @@ def main():
     print("-" * 70)
     try:
         model = load_mace_off_model("small")
-        print(f"✓ Model loaded successfully!")
+        print("✓ Model loaded successfully!")
         print(f"  Type map: {model.get_type_map()}")
         print(f"  Cutoff radius: {model.get_rcut()} Å")
         print()
@@ -32,7 +32,8 @@ def main():
     print("-" * 70)
     try:
         frozen_path = convert_mace_off_to_deepmd(
-            "small", "mace_off_frozen.pth"
+            "small",
+            "mace_off_frozen.pth",
         )
         print(f"✓ Model converted and saved to: {frozen_path}")
         print()

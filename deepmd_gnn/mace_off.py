@@ -95,7 +95,7 @@ def download_mace_off_model(
         print(f"Downloading MACE-OFF {model_name} model...")
         print(f"URL: {url}")
         print(f"Destination: {model_path}")
-        urlretrieve(url, model_path)
+        urlretrieve(url, model_path)  # noqa: S310
         print("Download complete!")
     else:
         print(f"Using cached model: {model_path}")
@@ -150,50 +150,52 @@ def load_mace_off_model(
     # Note: weights_only=False is required for MACE models as they contain
     # custom objects. Only use with trusted MACE-OFF models from official sources.
     mace_model = torch.load(str(model_path), map_location=device, weights_only=False)
-    
+
     # Extract configuration from the pretrained model
     # MACE models have attributes we need to extract
-    if not hasattr(mace_model, 'atomic_numbers'):
+    if not hasattr(mace_model, "atomic_numbers"):
         msg = "Loaded model does not appear to be a valid MACE model (missing atomic_numbers)"
         raise ValueError(msg)
-    
+
     atomic_numbers = mace_model.atomic_numbers.tolist()
-    
+
     # Validate atomic numbers are in valid range
     if any(z < 1 or z > len(ELEMENTS) for z in atomic_numbers):
         msg = f"Invalid atomic numbers found: {atomic_numbers}. Must be between 1 and {len(ELEMENTS)}"
         raise ValueError(msg)
-    
+
     # Convert atomic numbers to element symbols
     type_map = [ELEMENTS[z - 1] for z in atomic_numbers]
-    
+
     # Extract model hyperparameters
     # These are stored in the MACE model's configuration
-    if not hasattr(mace_model, 'r_max') or not hasattr(mace_model, 'num_interactions'):
+    if not hasattr(mace_model, "r_max") or not hasattr(mace_model, "num_interactions"):
         msg = "Loaded model missing required attributes (r_max, num_interactions)"
         raise ValueError(msg)
-    
+
     r_max = float(mace_model.r_max)
     num_interactions = int(mace_model.num_interactions)
-    
+
     # Helper function to get attribute with default and warning
-    def get_attr_with_default(obj, attr, default, warn=True):
+    def get_attr_with_default(
+        obj: object, attr: str, default: object, warn: bool = True,
+    ) -> object:
         """Get attribute from object with default value and optional warning.
-        
+
         Parameters
         ----------
         obj : object
             Object to get attribute from
         attr : str
             Attribute name
-        default : any
+        default : object
             Default value if attribute not found
         warn : bool, optional
             Whether to print warning when using default
-            
+
         Returns
         -------
-        value
+        object
             Attribute value or default
         """
         value = getattr(obj, attr, None)
@@ -202,34 +204,34 @@ def load_mace_off_model(
                 print(f"Warning: Using default {attr}={default} (not found in model)")
             return default
         return value
-    
+
     # Get other parameters with defaults if not available
-    num_radial_basis = get_attr_with_default(mace_model, 'num_bessel', 8)
-    num_cutoff_basis = get_attr_with_default(mace_model, 'num_polynomial_cutoff', 5)
-    max_ell = get_attr_with_default(mace_model, 'max_ell', 3)
-    correlation = get_attr_with_default(mace_model, 'correlation', 3)
-    radial_MLP = get_attr_with_default(mace_model, 'radial_MLP', [64, 64, 64])
-    
+    num_radial_basis = get_attr_with_default(mace_model, "num_bessel", 8)
+    num_cutoff_basis = get_attr_with_default(mace_model, "num_polynomial_cutoff", 5)
+    max_ell = get_attr_with_default(mace_model, "max_ell", 3)
+    correlation = get_attr_with_default(mace_model, "correlation", 3)
+    radial_mlp = get_attr_with_default(mace_model, "radial_MLP", [64, 64, 64])
+
     # Get hidden_irreps with validation
-    if hasattr(mace_model, 'hidden_irreps') and mace_model.hidden_irreps is not None:
+    if hasattr(mace_model, "hidden_irreps") and mace_model.hidden_irreps is not None:
         hidden_irreps = str(mace_model.hidden_irreps)
     else:
         hidden_irreps = "128x0e + 128x1o"
         print("Warning: Using default hidden_irreps (not found in model)")
-    
+
     # Determine interaction class name
     interaction_cls_name = (
-        mace_model.interactions[0].__class__.__name__ 
-        if hasattr(mace_model, 'interactions') and len(mace_model.interactions) > 0 
+        mace_model.interactions[0].__class__.__name__
+        if hasattr(mace_model, "interactions") and len(mace_model.interactions) > 0
         else "RealAgnosticResidualInteractionBlock"
     )
-    
+
     # Create MaceModel with the extracted configuration
-    print(f"Creating DeePMD-GNN MaceModel wrapper...")
+    print("Creating DeePMD-GNN MaceModel wrapper...")
     print(f"  Type map: {type_map}")
     print(f"  r_max: {r_max}")
     print(f"  num_interactions: {num_interactions}")
-    
+
     deepmd_model = MaceModel(
         type_map=type_map,
         sel=100,  # This will be auto-determined during training/usage
@@ -241,9 +243,9 @@ def load_mace_off_model(
         num_interactions=num_interactions,
         hidden_irreps=hidden_irreps,
         correlation=correlation,
-        radial_MLP=radial_MLP,
+        radial_MLP=radial_mlp,
     )
-    
+
     # Load the pretrained weights into the DeePMD model
     # The MaceModel.model is a ScaleShiftMACE instance, same as MACE-OFF
     print("Loading pretrained weights...")
@@ -252,12 +254,12 @@ def load_mace_off_model(
     except RuntimeError as e:
         msg = f"Failed to load pretrained weights: {e}. Model architectures may not match."
         raise RuntimeError(msg) from e
-    
+
     deepmd_model.eval()
-    
+
     print("MACE-OFF model successfully loaded into DeePMD-GNN wrapper!")
     print("You can now use this with DeePMD-kit (dp freeze) and MD packages.")
-    
+
     return deepmd_model
 
 
@@ -307,12 +309,12 @@ def convert_mace_off_to_deepmd(
     """
     # Load the MACE-OFF model as a MaceModel
     deepmd_model = load_mace_off_model(model_name, cache_dir=cache_dir)
-    
+
     # Create output path
     output_path = Path(output_file)
-    
+
     print(f"Freezing model to {output_path}...")
-    
+
     # Save as a frozen TorchScript model
     try:
         # Use torch.jit.script to create a TorchScript version
@@ -328,13 +330,14 @@ def convert_mace_off_to_deepmd(
         print("Saving model in PyTorch format instead...")
         torch.save(deepmd_model, str(output_path))
         print(f"Model saved to: {output_path}")
-    
+
     return output_path
+
 
 __all__ = [
     "MACE_OFF_MODELS",
-    "download_mace_off_model",
-    "load_mace_off_model",
     "convert_mace_off_to_deepmd",
+    "download_mace_off_model",
     "get_mace_off_cache_dir",
+    "load_mace_off_model",
 ]

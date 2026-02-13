@@ -5,6 +5,7 @@ This example demonstrates how to load MACE-OFF foundation models and use them wi
 ## Overview
 
 MACE-OFF models are pretrained foundation models for molecular systems. This integration allows you to:
+
 1. Download MACE-OFF models (small, medium, large)
 2. Load them into DeePMD-GNN's MaceModel wrapper
 3. Use them with MD packages (LAMMPS, AMBER/sander) through DeePMD-kit
@@ -33,6 +34,7 @@ model_path = convert_mace_off_to_deepmd("small", "frozen_model.pth")
 ```
 
 Available models:
+
 - `"small"`: Fast, good for screening and QM/MM
 - `"medium"`: Balanced speed and accuracy
 - `"large"`: Best accuracy, slower
@@ -55,6 +57,7 @@ The MACE-OFF model integrates with AMBER through DeePMD-kit's existing interface
 #### QM/MM Type Map Convention
 
 For QM/MM simulations, use the DPRc mechanism:
+
 - **QM atoms**: Standard element symbols (H, C, N, O, etc.)
 - **MM atoms**: Prefix with 'm' (mH, mC, etc.) or use HW/OW for water
 
@@ -81,17 +84,18 @@ print(f"Cutoff: {model.get_rcut()}")
 
 ### MACE-OFF Models
 
-| Model | Parameters | Speed | Best For |
-|-------|-----------|-------|----------|
-| small | ~1M | Fast | QM/MM, screening, quick simulations |
-| medium | ~5M | Medium | Production MD runs |
-| large | ~20M | Slow | High-accuracy calculations |
+| Model  | Parameters | Speed  | Best For                            |
+| ------ | ---------- | ------ | ----------------------------------- |
+| small  | ~1M        | Fast   | QM/MM, screening, quick simulations |
+| medium | ~5M        | Medium | Production MD runs                  |
+| large  | ~20M       | Slow   | High-accuracy calculations          |
 
 ### Energy and Force Units
 
 MACE models use:
+
 - **Energy**: eV
-- **Forces**: eV/Angstrom  
+- **Forces**: eV/Angstrom
 - **Coordinates**: Angstrom
 
 ## References
