@@ -3,7 +3,7 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -39,7 +39,7 @@ class SanderInterface:
 
     def __init__(
         self,
-        model_file: str | Path,
+        model_file: Union[str, Path],
         qm_atoms: Optional[list[int]] = None,
         dtype: str = "float64",
     ) -> None:
@@ -187,7 +187,7 @@ class SanderInterface:
         return qm_atoms
 
     @classmethod
-    def from_config(cls, config_file: str | Path) -> "SanderInterface":
+    def from_config(cls, config_file: Union[str, Path]) -> "SanderInterface":
         """Create interface from configuration file.
 
         The configuration file should be a simple text file with key-value pairs:
@@ -238,7 +238,7 @@ class SanderInterface:
 
 
 def compute_qm_energy_sander(
-    model_file: str,
+    model_file: Union[str, Path],
     coordinates: np.ndarray,
     atom_types: np.ndarray,
     box: Optional[np.ndarray] = None,
@@ -250,7 +250,7 @@ def compute_qm_energy_sander(
 
     Parameters
     ----------
-    model_file : str
+    model_file : str or Path
         Path to frozen MACE model file
     coordinates : np.ndarray
         Atomic coordinates in Angstroms, shape (natoms, 3)
