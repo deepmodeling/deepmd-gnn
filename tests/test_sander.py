@@ -196,12 +196,12 @@ class TestSanderInterface(unittest.TestCase):
 
         interface = SanderInterface(self.model_path)
 
-        # Types: [C, H, O, mH, mO]
+        # Types: [C, H, O, mH, mO] (indices 0-4)
         types = np.array([0, 1, 2, 3, 4])
 
         qm_atoms = interface.get_qm_atoms_from_types(types)
 
-        # First 3 are QM (C, H, O), last 2 are MM (mH, mO)
+        # First 3 are QM (C, H, O at indices 0-2), last 2 are MM (mH, mO at indices 3-4)
         assert qm_atoms == [0, 1, 2]
 
     def test_from_config(self):
