@@ -8,6 +8,7 @@ Table of contents
 
    Overview <index>
    parameters
+   sander_qmmm
    Python API <autoapi/deepmd-gnn/index>
 
 Indices and tables
