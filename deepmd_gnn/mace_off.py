@@ -147,10 +147,16 @@ def load_mace_off_model(
 
     # Load the pretrained MACE model
     print(f"Loading MACE-OFF {model_name} model from {model_path}...")
+    # Note: weights_only=False is required for MACE models as they contain
+    # custom objects. Only use with trusted MACE-OFF models from official sources.
     mace_model = torch.load(str(model_path), map_location=device, weights_only=False)
     
     # Extract configuration from the pretrained model
     # MACE models have attributes we need to extract
+    if not hasattr(mace_model, 'atomic_numbers'):
+        msg = "Loaded model does not appear to be a valid MACE model (missing atomic_numbers)"
+        raise ValueError(msg)
+    
     atomic_numbers = mace_model.atomic_numbers.tolist()
     
     # Convert atomic numbers to element symbols
@@ -158,21 +164,46 @@ def load_mace_off_model(
     
     # Extract model hyperparameters
     # These are stored in the MACE model's configuration
+    if not hasattr(mace_model, 'r_max') or not hasattr(mace_model, 'num_interactions'):
+        msg = "Loaded model missing required attributes (r_max, num_interactions)"
+        raise ValueError(msg)
+    
     r_max = float(mace_model.r_max)
     num_interactions = int(mace_model.num_interactions)
     
     # Get other parameters with defaults if not available
-    num_radial_basis = getattr(mace_model, 'num_bessel', 8)
-    num_cutoff_basis = getattr(mace_model, 'num_polynomial_cutoff', 5)
-    max_ell = getattr(mace_model, 'max_ell', 3)
+    # Warn when using defaults
+    num_radial_basis = getattr(mace_model, 'num_bessel', None)
+    if num_radial_basis is None:
+        print("Warning: Using default num_radial_basis=8 (not found in model)")
+        num_radial_basis = 8
+    
+    num_cutoff_basis = getattr(mace_model, 'num_polynomial_cutoff', None)
+    if num_cutoff_basis is None:
+        print("Warning: Using default num_cutoff_basis=5 (not found in model)")
+        num_cutoff_basis = 5
+    
+    max_ell = getattr(mace_model, 'max_ell', None)
+    if max_ell is None:
+        print("Warning: Using default max_ell=3 (not found in model)")
+        max_ell = 3
+    
     hidden_irreps = str(mace_model.hidden_irreps) if hasattr(mace_model, 'hidden_irreps') else "128x0e + 128x1o"
-    correlation = getattr(mace_model, 'correlation', 3)
+    if not hasattr(mace_model, 'hidden_irreps'):
+        print("Warning: Using default hidden_irreps (not found in model)")
+    
+    correlation = getattr(mace_model, 'correlation', None)
+    if correlation is None:
+        print("Warning: Using default correlation=3 (not found in model)")
+        correlation = 3
     
     # Determine interaction class name
     interaction_cls_name = mace_model.interactions[0].__class__.__name__ if hasattr(mace_model, 'interactions') and len(mace_model.interactions) > 0 else "RealAgnosticResidualInteractionBlock"
     
     # Get radial MLP structure
     radial_MLP = getattr(mace_model, 'radial_MLP', [64, 64, 64])
+    if not hasattr(mace_model, 'radial_MLP'):
+        print("Warning: Using default radial_MLP=[64,64,64] (not found in model)")
     
     # Create MaceModel with the extracted configuration
     print(f"Creating DeePMD-GNN MaceModel wrapper...")
@@ -197,7 +228,12 @@ def load_mace_off_model(
     # Load the pretrained weights into the DeePMD model
     # The MaceModel.model is a ScaleShiftMACE instance, same as MACE-OFF
     print("Loading pretrained weights...")
-    deepmd_model.model.load_state_dict(mace_model.state_dict())
+    try:
+        deepmd_model.model.load_state_dict(mace_model.state_dict(), strict=True)
+    except RuntimeError as e:
+        msg = f"Failed to load pretrained weights: {e}. Model architectures may not match."
+        raise RuntimeError(msg) from e
+    
     deepmd_model.eval()
     
     print("MACE-OFF model successfully loaded into DeePMD-GNN wrapper!")
@@ -283,4 +319,3 @@ __all__ = [
     "convert_mace_off_to_deepmd",
     "get_mace_off_cache_dir",
 ]
-
