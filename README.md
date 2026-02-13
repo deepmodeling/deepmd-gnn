@@ -188,7 +188,54 @@ Type maps that starts with `m` (such as `mH`) or `OW` or `HW` will be recognized
 Two MM atoms will not build edges with each other.
 Such GNN+DPRc model can be directly used in AmberTools24.
 
+## Sander QM/MM Support
+
+DeePMD-GNN provides support for using MACE-OFF foundation models in sander QM/MM simulations for QM internal energy correction.
+
+### MACE-OFF Models
+
+MACE-OFF is a series of pretrained foundation models for molecular systems. DeePMD-GNN provides utilities to download and use these models:
+
+```python
+from deepmd_gnn import download_mace_off_model, convert_mace_off_to_deepmd
+
+# Download MACE-OFF small model
+model_path = download_mace_off_model("small")
+
+# Convert to DeePMD format
+deepmd_model = convert_mace_off_to_deepmd("small", "mace_qmmm.pth")
+```
+
+Available models: `small`, `medium`, `large`
+
+### Sander Interface
+
+The sander interface allows computation of QM energy corrections:
+
+```python
+from deepmd_gnn import SanderInterface
+import numpy as np
+
+# Initialize interface
+interface = SanderInterface("mace_qmmm.pth")
+
+# Compute QM correction
+energy, forces = interface.compute_qm_correction(coords, types, box)
+```
+
+### QM/MM Type Map Convention
+
+- **QM atoms**: Standard element symbols (H, C, N, O, etc.)
+- **MM atoms**: Prefixed with 'm' (mH, mC, etc.) or HW/OW for water
+
+Example: `["C", "H", "O", "N", "mC", "mH", "mO", "HW", "OW"]`
+
+For detailed examples and documentation, see:
+- [examples/sander_qmmm](examples/sander_qmmm)
+- [Documentation](https://deepmd-gnn.readthedocs.io/)
+
 ## Examples
 
-- [examples/water](examples/water)
-- [examples/dprc](examples/dprc)
+- [examples/water](examples/water) - Basic MACE and NequIP training examples
+- [examples/dprc](examples/dprc) - DPRc (QM/MM) examples with mixed atom types
+- [examples/sander_qmmm](examples/sander_qmmm) - MACE-OFF model usage for sander QM/MM simulations
