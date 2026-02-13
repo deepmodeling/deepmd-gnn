@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Support for loading pretrained MACE models into DeePMD-GNN."""
 
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,9 @@ from urllib.request import urlretrieve
 import torch
 
 from deepmd_gnn.mace import ELEMENTS, MaceModel
+
+# Setup logger for this module
+logger = logging.getLogger(__name__)
 
 # URLs for MACE-OFF pretrained models
 MACE_OFF_MODELS = {
@@ -92,13 +96,13 @@ def download_mace_off_model(
 
     # Download if needed
     if not model_path.exists() or force_download:
-        print(f"Downloading MACE-OFF {model_name} model...")
-        print(f"URL: {url}")
-        print(f"Destination: {model_path}")
+        logger.info("Downloading MACE-OFF %s model...", model_name)
+        logger.info("URL: %s", url)
+        logger.info("Destination: %s", model_path)
         urlretrieve(url, model_path)  # noqa: S310
-        print("Download complete!")
+        logger.info("Download complete!")
     else:
-        print(f"Using cached model: {model_path}")
+        logger.info("Using cached model: %s", model_path)
 
     return model_path
 
@@ -146,7 +150,7 @@ def load_mace_off_model(
     )
 
     # Load the pretrained MACE model
-    print(f"Loading MACE-OFF {model_name} model from {model_path}...")
+    logger.info("Loading MACE-OFF %s model from %s...", model_name, model_path)
     # Note: weights_only=False is required for MACE models as they contain
     # custom objects. Only use with trusted MACE-OFF models from official sources.
     mace_model = torch.load(str(model_path), map_location=device, weights_only=False)
@@ -178,7 +182,10 @@ def load_mace_off_model(
 
     # Helper function to get attribute with default and warning
     def get_attr_with_default(
-        obj: object, attr: str, default: object, warn: bool = True,
+        obj: object,
+        attr: str,
+        default: object,
+        warn: bool = True,
     ) -> object:
         """Get attribute from object with default value and optional warning.
 
@@ -201,7 +208,9 @@ def load_mace_off_model(
         value = getattr(obj, attr, None)
         if value is None:
             if warn:
-                print(f"Warning: Using default {attr}={default} (not found in model)")
+                logger.warning(
+                    "Using default %s=%s (not found in model)", attr, default,
+                )
             return default
         return value
 
@@ -217,7 +226,7 @@ def load_mace_off_model(
         hidden_irreps = str(mace_model.hidden_irreps)
     else:
         hidden_irreps = "128x0e + 128x1o"
-        print("Warning: Using default hidden_irreps (not found in model)")
+        logger.warning("Using default hidden_irreps (not found in model)")
 
     # Determine interaction class name
     interaction_cls_name = (
@@ -227,10 +236,10 @@ def load_mace_off_model(
     )
 
     # Create MaceModel with the extracted configuration
-    print("Creating DeePMD-GNN MaceModel wrapper...")
-    print(f"  Type map: {type_map}")
-    print(f"  r_max: {r_max}")
-    print(f"  num_interactions: {num_interactions}")
+    logger.info("Creating DeePMD-GNN MaceModel wrapper...")
+    logger.debug("Type map: %s", type_map)
+    logger.debug("r_max: %s", r_max)
+    logger.debug("num_interactions: %s", num_interactions)
 
     deepmd_model = MaceModel(
         type_map=type_map,
@@ -248,7 +257,7 @@ def load_mace_off_model(
 
     # Load the pretrained weights into the DeePMD model
     # The MaceModel.model is a ScaleShiftMACE instance, same as MACE-OFF
-    print("Loading pretrained weights...")
+    logger.info("Loading pretrained weights...")
     try:
         deepmd_model.model.load_state_dict(mace_model.state_dict(), strict=True)
     except RuntimeError as e:
@@ -257,8 +266,8 @@ def load_mace_off_model(
 
     deepmd_model.eval()
 
-    print("MACE-OFF model successfully loaded into DeePMD-GNN wrapper!")
-    print("You can now use this with DeePMD-kit (dp freeze) and MD packages.")
+    logger.info("MACE-OFF model successfully loaded into DeePMD-GNN wrapper!")
+    logger.info("You can now use this with DeePMD-kit (dp freeze) and MD packages.")
 
     return deepmd_model
 
@@ -308,28 +317,26 @@ def convert_mace_off_to_deepmd(
     >>> # Now use in LAMMPS, AMBER, etc. through DeePMD-kit
     """
     # Load the MACE-OFF model as a MaceModel
-    deepmd_model = load_mace_off_model(model_name, cache_dir=cache_dir)
+    model = load_mace_off_model(model_name, cache_dir=cache_dir)
 
     # Create output path
     output_path = Path(output_file)
 
-    print(f"Freezing model to {output_path}...")
-
-    # Save as a frozen TorchScript model
+    # Try to freeze the model using TorchScript
+    logger.info("Freezing model to %s...", output_path)
     try:
-        # Use torch.jit.script to create a TorchScript version
-        scripted_model = torch.jit.script(deepmd_model)
+        scripted_model = torch.jit.script(model)
         torch.jit.save(scripted_model, str(output_path))
-        print(f"Model successfully frozen and saved to: {output_path}")
-        print("\nYou can now use this model with:")
-        print("  - LAMMPS: Set DP_PLUGIN_PATH and use pair_style deepmd")
-        print("  - AMBER/sander: Use DeePMD-kit's AMBER interface")
-        print("  - For QM/MM: Use 'm' prefix or HW/OW for MM atom types")
-    except Exception as e:
-        print(f"Warning: TorchScript compilation failed ({e})")
-        print("Saving model in PyTorch format instead...")
-        torch.save(deepmd_model, str(output_path))
-        print(f"Model saved to: {output_path}")
+        logger.info("Model successfully frozen and saved to: %s", output_path)
+        logger.info("\nYou can now use this model with:")
+        logger.info("  - LAMMPS: Set DP_PLUGIN_PATH and use pair_style deepmd")
+        logger.info("  - AMBER/sander: Use DeePMD-kit's AMBER interface")
+        logger.info("  - For QM/MM: Use 'm' prefix or HW/OW for MM atom types")
+    except (RuntimeError, torch.jit.Error) as e:
+        logger.warning("TorchScript compilation failed (%s)", e)
+        logger.warning("Saving model in PyTorch format instead...")
+        torch.save(model, str(output_path))
+        logger.info("Model saved to: %s", output_path)
 
     return output_path
 

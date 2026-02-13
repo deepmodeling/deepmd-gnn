@@ -1,10 +1,18 @@
 """Main entry point for the command line interface."""
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 from deepmd_gnn.mace_off import convert_mace_off_to_deepmd, download_mace_off_model
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def main() -> int:
@@ -70,7 +78,7 @@ def main() -> int:
             cache_dir=cache_dir,
             force_download=args.force,
         )
-        print(f"Model downloaded to: {model_path}")
+        logger.info("Model downloaded to: %s", model_path)
         return 0
 
     if args.command == "convert-mace-off":
@@ -80,7 +88,7 @@ def main() -> int:
             output_file=args.output,
             cache_dir=cache_dir,
         )
-        print(f"Converted model saved to: {output_path}")
+        logger.info("Converted model saved to: %s", output_path)
         return 0
 
     parser.print_help()

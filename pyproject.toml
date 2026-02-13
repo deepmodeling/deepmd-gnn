@@ -112,13 +112,6 @@ convention = "numpy"
     "EXE001", # shebang allowed in examples
     "BLE001", # blind exception catching allowed in examples
 ]
-"deepmd_gnn/mace_off.py" = [
-    "T201", # print allowed for user feedback
-    "BLE001", # blind exception catching for fallback behavior
-]
-"deepmd_gnn/__main__.py" = [
-    "T201", # print allowed in CLI
-]
 "docs/conf.py" = [
     "ERA001",
     "INP001",
