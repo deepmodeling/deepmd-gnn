@@ -37,6 +37,7 @@ keywords = [
 ]
 
 [project.scripts]
+deepmd-gnn = "deepmd_gnn.__main__:main"
 
 [project.entry-points."deepmd.pt"]
 mace = "deepmd_gnn.mace:MaceModel"
@@ -103,6 +104,13 @@ convention = "numpy"
     "ANN",
     "D101",
     "D102",
+    "PT027", # unittest style assertRaises is fine
+]
+"examples/**/*.py" = [
+    "T201", # print allowed in examples
+    "S603", # subprocess without shell allowed in examples
+    "EXE001", # shebang allowed in examples
+    "BLE001", # blind exception catching allowed in examples
 ]
 "docs/conf.py" = [
     "ERA001",

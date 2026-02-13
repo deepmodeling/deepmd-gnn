@@ -4,11 +4,19 @@ import os
 
 from ._version import __version__
 from .argcheck import mace_model_args
+from .mace_off import (
+    convert_mace_off_to_deepmd,
+    download_mace_off_model,
+    load_mace_off_model,
+)
 
 __email__ = "jinzhe.zeng@ustc.edu.cn"
 
 __all__ = [
     "__version__",
+    "convert_mace_off_to_deepmd",
+    "download_mace_off_model",
+    "load_mace_off_model",
     "mace_model_args",
 ]
 

@@ -188,7 +188,31 @@ Type maps that starts with `m` (such as `mH`) or `OW` or `HW` will be recognized
 Two MM atoms will not build edges with each other.
 Such GNN+DPRc model can be directly used in AmberTools24.
 
+## MACE-OFF Pretrained Models
+
+DeePMD-GNN supports loading MACE-OFF foundation models for use with DeePMD-kit and MD packages:
+
+```python
+from deepmd_gnn import load_mace_off_model, convert_mace_off_to_deepmd
+
+# Load MACE-OFF model into DeePMD-GNN wrapper
+model = load_mace_off_model("small")  # or "medium", "large"
+
+# Convert to frozen format for MD simulations
+convert_mace_off_to_deepmd("small", "frozen_model.pth")
+# Now use with LAMMPS, AMBER/sander through DeePMD-kit
+```
+
+The frozen model can be used with:
+
+- **LAMMPS**: Set `DP_PLUGIN_PATH` and use `pair_style deepmd`
+- **AMBER/sander**: Through DeePMD-kit's AMBER interface (supports QM/MM with DPRc)
+- **Other MD packages**: Through DeePMD-kit's C++ interface
+
+For QM/MM simulations, use the DPRc mechanism: QM atoms use standard symbols (H, C, O), MM atoms use 'm' prefix (mH, mC) or HW/OW.
+
 ## Examples
 
-- [examples/water](examples/water)
-- [examples/dprc](examples/dprc)
+- [examples/water](examples/water) - Basic MACE and NequIP training
+- [examples/dprc](examples/dprc) - DPRc (QM/MM) with mixed atom types
+- [examples/mace_off](examples/mace_off) - Using MACE-OFF pretrained models with DeePMD-kit
