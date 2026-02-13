@@ -159,6 +159,11 @@ def load_mace_off_model(
     
     atomic_numbers = mace_model.atomic_numbers.tolist()
     
+    # Validate atomic numbers are in valid range
+    if any(z < 1 or z > len(ELEMENTS) for z in atomic_numbers):
+        msg = f"Invalid atomic numbers found: {atomic_numbers}. Must be between 1 and {len(ELEMENTS)}"
+        raise ValueError(msg)
+    
     # Convert atomic numbers to element symbols
     type_map = [ELEMENTS[z - 1] for z in atomic_numbers]
     
@@ -171,39 +176,36 @@ def load_mace_off_model(
     r_max = float(mace_model.r_max)
     num_interactions = int(mace_model.num_interactions)
     
+    # Helper function to get attribute with default and warning
+    def get_attr_with_default(obj, attr, default, warn=True):
+        value = getattr(obj, attr, None)
+        if value is None:
+            if warn:
+                print(f"Warning: Using default {attr}={default} (not found in model)")
+            return default
+        return value
+    
     # Get other parameters with defaults if not available
-    # Warn when using defaults
-    num_radial_basis = getattr(mace_model, 'num_bessel', None)
-    if num_radial_basis is None:
-        print("Warning: Using default num_radial_basis=8 (not found in model)")
-        num_radial_basis = 8
+    num_radial_basis = get_attr_with_default(mace_model, 'num_bessel', 8)
+    num_cutoff_basis = get_attr_with_default(mace_model, 'num_polynomial_cutoff', 5)
+    max_ell = get_attr_with_default(mace_model, 'max_ell', 3)
+    correlation = get_attr_with_default(mace_model, 'correlation', 3)
+    radial_MLP = get_attr_with_default(mace_model, 'radial_MLP', [64, 64, 64])
     
-    num_cutoff_basis = getattr(mace_model, 'num_polynomial_cutoff', None)
-    if num_cutoff_basis is None:
-        print("Warning: Using default num_cutoff_basis=5 (not found in model)")
-        num_cutoff_basis = 5
-    
-    max_ell = getattr(mace_model, 'max_ell', None)
-    if max_ell is None:
-        print("Warning: Using default max_ell=3 (not found in model)")
-        max_ell = 3
-    
-    hidden_irreps = str(mace_model.hidden_irreps) if hasattr(mace_model, 'hidden_irreps') else "128x0e + 128x1o"
+    hidden_irreps = (
+        str(mace_model.hidden_irreps) 
+        if hasattr(mace_model, 'hidden_irreps') 
+        else "128x0e + 128x1o"
+    )
     if not hasattr(mace_model, 'hidden_irreps'):
         print("Warning: Using default hidden_irreps (not found in model)")
     
-    correlation = getattr(mace_model, 'correlation', None)
-    if correlation is None:
-        print("Warning: Using default correlation=3 (not found in model)")
-        correlation = 3
-    
     # Determine interaction class name
-    interaction_cls_name = mace_model.interactions[0].__class__.__name__ if hasattr(mace_model, 'interactions') and len(mace_model.interactions) > 0 else "RealAgnosticResidualInteractionBlock"
-    
-    # Get radial MLP structure
-    radial_MLP = getattr(mace_model, 'radial_MLP', [64, 64, 64])
-    if not hasattr(mace_model, 'radial_MLP'):
-        print("Warning: Using default radial_MLP=[64,64,64] (not found in model)")
+    interaction_cls_name = (
+        mace_model.interactions[0].__class__.__name__ 
+        if hasattr(mace_model, 'interactions') and len(mace_model.interactions) > 0 
+        else "RealAgnosticResidualInteractionBlock"
+    )
     
     # Create MaceModel with the extracted configuration
     print(f"Creating DeePMD-GNN MaceModel wrapper...")

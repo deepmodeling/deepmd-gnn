@@ -37,9 +37,9 @@ def main():
         print(f"✓ Model converted and saved to: {frozen_path}")
         print()
         print("You can now use this model with:")
-        print("  • LAMMPS (with DP_PLUGIN_PATH set)")
-        print("  • AMBER/sander (through DeePMD-kit interface)")
-        print("  • Other MD packages supported by DeePMD-kit")
+        print("  - LAMMPS (with DP_PLUGIN_PATH set)")
+        print("  - AMBER/sander (through DeePMD-kit interface)")
+        print("  - Other MD packages supported by DeePMD-kit")
         print()
     except Exception as e:
         print(f"✗ Failed to convert model: {e}")
