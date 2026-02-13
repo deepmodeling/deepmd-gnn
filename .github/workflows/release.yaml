@@ -44,7 +44,7 @@ jobs:
             python: 312
             platform_id: manylinux_aarch64
           # macos-x86-64
-          - os: macos-13
+          - os: macos-15-intel
             python: 312
             platform_id: macosx_x86_64
           # macos-arm64
