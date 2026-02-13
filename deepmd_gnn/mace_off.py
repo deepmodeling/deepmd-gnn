@@ -209,7 +209,9 @@ def load_mace_off_model(
         if value is None:
             if warn:
                 logger.warning(
-                    "Using default %s=%s (not found in model)", attr, default,
+                    "Using default %s=%s (not found in model)",
+                    attr,
+                    default,
                 )
             return default
         return value
