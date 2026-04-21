@@ -9,6 +9,11 @@ from deepmd.dpmodel.output_def import (
     ModelOutputDef,
     OutputVariableDef,
 )
+from deepmd.dpmodel.utils.stat import (
+    _restore_observed_type_from_file,
+    _save_observed_type_to_file,
+    collect_observed_types,
+)
 from deepmd.pt.model.model.model import (
     BaseModel,
 )
@@ -235,12 +240,6 @@ class NequipModel(BaseModel):
         preset_observed_type
             Unused compatibility parameter accepted for newer deepmd-kit versions.
         """
-        from deepmd.dpmodel.utils.stat import (
-            _restore_observed_type_from_file,
-            _save_observed_type_to_file,
-            collect_observed_types,
-        )
-
         if preset_observed_type is not None:
             self._observed_type = preset_observed_type
         else:
