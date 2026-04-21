@@ -1,5 +1,6 @@
 """Nequip model."""
 
+import importlib
 from copy import deepcopy
 from typing import Any, Optional
 
@@ -9,29 +10,6 @@ from deepmd.dpmodel.output_def import (
     ModelOutputDef,
     OutputVariableDef,
 )
-
-try:
-    from deepmd.dpmodel.utils.stat import (
-        _restore_observed_type_from_file,
-        _save_observed_type_to_file,
-        collect_observed_types,
-    )
-except ImportError:
-
-    def collect_observed_types(sampled, type_map) -> list[str]:  # noqa: ANN001
-        """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-        _ = sampled, type_map
-        return []
-
-    def _restore_observed_type_from_file(stat_file_path):  # noqa: ANN001, ANN202
-        """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-        _ = stat_file_path
-
-    def _save_observed_type_to_file(stat_file_path, observed_type):  # noqa: ANN001, ANN202
-        """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-        _ = stat_file_path, observed_type
-
-
 from deepmd.pt.model.model.model import (
     BaseModel,
 )
@@ -68,6 +46,43 @@ from e3nn.util.jit import (
     script,
 )
 from nequip.model import model_from_config
+
+
+def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
+    try:
+        stat_mod = importlib.import_module("deepmd.dpmodel.utils.stat")
+    except ImportError:
+
+        def collect_observed_types(sampled, type_map) -> list[str]:  # noqa: ANN001
+            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+            _ = sampled, type_map
+            return []
+
+        def _restore_observed_type_from_file(stat_file_path):  # noqa: ANN001, ANN202
+            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+            _ = stat_file_path
+
+        def _save_observed_type_to_file(stat_file_path, observed_type):  # noqa: ANN001, ANN202
+            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+            _ = stat_file_path, observed_type
+
+        return (
+            _restore_observed_type_from_file,
+            _save_observed_type_to_file,
+            collect_observed_types,
+        )
+    else:
+        restore = stat_mod._restore_observed_type_from_file  # noqa: SLF001
+        save = stat_mod._save_observed_type_to_file  # noqa: SLF001
+        collect = stat_mod.collect_observed_types
+        return (restore, save, collect)
+
+
+(
+    _restore_observed_type_from_file,
+    _save_observed_type_to_file,
+    collect_observed_types,
+) = _load_observed_type_stat_compat()
 
 
 @BaseModel.register("nequip")
@@ -261,10 +276,13 @@ class NequipModel(BaseModel):
         if preset_observed_type is not None:
             self._observed_type = preset_observed_type
         else:
-            observed = _restore_observed_type_from_file(stat_file_path)
-            if observed is None:
+            if stat_file_path is None:
                 observed = collect_observed_types(sampled_func(), self.type_map)
-                _save_observed_type_to_file(stat_file_path, observed)
+            else:
+                observed = _restore_observed_type_from_file(stat_file_path)
+                if observed is None:
+                    observed = collect_observed_types(sampled_func(), self.type_map)
+                    _save_observed_type_to_file(stat_file_path, observed)
             self._observed_type = observed
         bias_out, _ = compute_output_stats(
             sampled_func,
