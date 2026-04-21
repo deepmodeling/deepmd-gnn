@@ -11,11 +11,29 @@ from deepmd.dpmodel.output_def import (
     ModelOutputDef,
     OutputVariableDef,
 )
-from deepmd.dpmodel.utils.stat import (
-    _restore_observed_type_from_file,
-    _save_observed_type_to_file,
-    collect_observed_types,
-)
+
+try:
+    from deepmd.dpmodel.utils.stat import (
+        _restore_observed_type_from_file,
+        _save_observed_type_to_file,
+        collect_observed_types,
+    )
+except ImportError:
+
+    def collect_observed_types(sampled, type_map) -> list[str]:  # noqa: ANN001
+        """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+        _ = sampled, type_map
+        return []
+
+    def _restore_observed_type_from_file(stat_file_path):  # noqa: ANN001, ANN202
+        """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+        _ = stat_file_path
+
+    def _save_observed_type_to_file(stat_file_path, observed_type):  # noqa: ANN001, ANN202
+        """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+        _ = stat_file_path, observed_type
+
+
 from deepmd.pt.model.model.model import (
     BaseModel,
 )
