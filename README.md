@@ -188,6 +188,32 @@ Type maps that starts with `m` (such as `mH`) or `OW` or `HW` will be recognized
 Two MM atoms will not build edges with each other.
 Such GNN+DPRc model can be directly used in AmberTools24.
 
+## Conservative MACE-OFF checkpoint loading
+
+`deepmd_gnn.mace_off` provides a conservative loader for selected official
+MACE-OFF checkpoints. It is intentionally narrower than DPRc/QM/MM support:
+
+- it only infers ordinary element `type_map` entries from checkpoint
+  `atomic_numbers`
+- it does **not** infer DPRc/MM labels such as `mH`, `mC`, `HW`, or `OW`
+- it requires an explicit `sel` value, because DeePMD's runtime neighbor-list
+  cap is not stored in the MACE-OFF checkpoint and guessing it can silently
+  truncate neighbors
+- scripting the wrapped model is only a DeePMD-GNN serialization step; callers
+  should still validate any downstream deployment path they care about
+
+Example:
+
+```python
+from deepmd_gnn.mace_off import convert_mace_off_to_deepmd
+
+convert_mace_off_to_deepmd(
+    output_file="mace_off23_small_dp.pt",
+    model_name="off23_small",
+    sel=64,
+)
+```
+
 ## Examples
 
 - [examples/water](examples/water)
