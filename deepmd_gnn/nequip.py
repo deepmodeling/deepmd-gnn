@@ -93,6 +93,7 @@ class NequipModel(BaseModel):
 
     mm_types: list[int]
     e0: torch.Tensor
+    _observed_type: Optional[list[str]]
 
     def __init__(
         self,
@@ -142,6 +143,7 @@ class NequipModel(BaseModel):
         self.type_map = type_map
         self.ntypes = len(type_map)
         self.preset_out_bias: dict[str, list] = {"energy": []}
+        self._observed_type = None
         self.mm_types = []
         self.sel = sel
         self.num_layers = num_layers
@@ -189,6 +191,27 @@ class NequipModel(BaseModel):
             ),
         )
 
+    @property
+    def atomic_model(self) -> "NequipModel":
+        """Provide a compatibility view matching wrapped deepmd-kit models."""
+        return self
+
+    @property
+    def observed_type(self) -> Optional[list[str]]:
+        """Observed element types collected during statistics."""
+        return self._observed_type
+
+    @torch.jit.export
+    def get_observed_type_list(self) -> list[str]:
+        """Get observed element types collected during statistics."""
+        observed = self._observed_type
+        if observed is None:
+            return []
+        observed_type_list = torch.jit.annotate(list[str], [])
+        for item in observed:
+            observed_type_list.append(item)
+        return observed_type_list
+
     def compute_or_load_stat(
         self,
         sampled_func,  # noqa: ANN001
@@ -212,7 +235,20 @@ class NequipModel(BaseModel):
         preset_observed_type
             Unused compatibility parameter accepted for newer deepmd-kit versions.
         """
-        _ = preset_observed_type
+        from deepmd.dpmodel.utils.stat import (
+            _restore_observed_type_from_file,
+            _save_observed_type_to_file,
+            collect_observed_types,
+        )
+
+        if preset_observed_type is not None:
+            self._observed_type = preset_observed_type
+        else:
+            observed = _restore_observed_type_from_file(stat_file_path)
+            if observed is None:
+                observed = collect_observed_types(sampled_func(), self.type_map)
+                _save_observed_type_to_file(stat_file_path, observed)
+            self._observed_type = observed
         bias_out, _ = compute_output_stats(
             sampled_func,
             self.get_ntypes(),
