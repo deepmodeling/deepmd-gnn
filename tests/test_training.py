@@ -1,5 +1,6 @@
 """Test training."""
 
+import inspect
 import shutil
 import subprocess
 import sys
@@ -7,6 +8,16 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
+
+def test_compute_or_load_stat_accepts_preset_observed_type() -> None:
+    """The plugin models should accept new deepmd-kit compatibility kwargs."""
+    from deepmd_gnn.mace import MaceModel
+    from deepmd_gnn.nequip import NequipModel
+
+    for model_cls in [MaceModel, NequipModel]:
+        signature = inspect.signature(model_cls.compute_or_load_stat)
+        assert "preset_observed_type" in signature.parameters
 
 
 @pytest.mark.parametrize(

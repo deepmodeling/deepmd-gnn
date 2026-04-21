@@ -319,6 +319,7 @@ class MaceModel(BaseModel):
         self,
         sampled_func,  # noqa: ANN001
         stat_file_path: Optional[DPPath] = None,
+        preset_observed_type: Optional[list[str]] = None,
     ) -> None:
         """Compute or load the statistics parameters of the model.
 
@@ -334,7 +335,10 @@ class MaceModel(BaseModel):
             The sampled data frames from different data systems.
         stat_file_path
             The path to the statistics files.
+        preset_observed_type
+            Unused compatibility parameter accepted for newer deepmd-kit versions.
         """
+        _ = preset_observed_type
         bias_out, _ = compute_output_stats(
             sampled_func,
             self.get_ntypes(),
