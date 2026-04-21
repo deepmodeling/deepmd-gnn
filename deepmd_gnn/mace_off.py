@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 from urllib.request import urlretrieve
 
 import torch
@@ -38,9 +39,7 @@ _MACE_OFF_MODEL_ALIASES = {
     "large": "off23_large",
 }
 
-_ALLOWED_MISSING_STATE_DICT_SUFFIXES = (
-    "_zeroed",
-)
+_ALLOWED_MISSING_STATE_DICT_SUFFIXES = ("_zeroed",)
 
 _SUPPORTED_DISTANCE_TRANSFORMS = {
     None: "None",
@@ -179,7 +178,9 @@ def _infer_radial_type(mace_model: ScaleShiftMACE) -> str:
 
 def _infer_radial_mlp(mace_model: ScaleShiftMACE) -> list[int]:
     layers = [
-        layer for layer in mace_model.interactions[0].conv_tp_weights if hasattr(layer, "weight")
+        layer
+        for layer in mace_model.interactions[0].conv_tp_weights
+        if hasattr(layer, "weight")
     ]
     if len(layers) < 2:
         msg = "Unsupported radial MLP structure in MACE checkpoint"
@@ -188,7 +189,9 @@ def _infer_radial_mlp(mace_model: ScaleShiftMACE) -> list[int]:
 
 
 def _infer_interaction_name(mace_model: ScaleShiftMACE) -> str:
-    interaction_names = [interaction.__class__.__name__ for interaction in mace_model.interactions]
+    interaction_names = [
+        interaction.__class__.__name__ for interaction in mace_model.interactions
+    ]
     if not interaction_names:
         msg = "Loaded MACE model has no interaction blocks"
         raise ValueError(msg)
@@ -246,7 +249,10 @@ def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
         msg = f"Multi-head checkpoints are unsupported: heads={heads}"
         raise ValueError(msg)
 
-    if hasattr(mace_model, "embedding_specs") and mace_model.embedding_specs is not None:
+    if (
+        hasattr(mace_model, "embedding_specs")
+        and mace_model.embedding_specs is not None
+    ):
         msg = "Joint-embedding checkpoints are unsupported by the conservative loader"
         raise ValueError(msg)
 
@@ -360,7 +366,9 @@ def load_mace_off_model(
     with _temporary_default_dtype(source_dtype):
         deepmd_model = MaceModel(**config)
 
-    load_result = deepmd_model.model.load_state_dict(mace_model.state_dict(), strict=False)
+    load_result = deepmd_model.model.load_state_dict(
+        mace_model.state_dict(), strict=False
+    )
     _validate_load_result(load_result)
     deepmd_model.eval()
     return deepmd_model

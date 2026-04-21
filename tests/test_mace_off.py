@@ -21,9 +21,13 @@ from deepmd_gnn.mace_off import (
 
 def test_mace_off_model_urls_are_raw_github_paths() -> None:
     assert MACE_OFF_MODELS["off23_small"].endswith("mace_off23/MACE-OFF23_small.model")
-    assert MACE_OFF_MODELS["off23_medium"].endswith("mace_off23/MACE-OFF23_medium.model")
+    assert MACE_OFF_MODELS["off23_medium"].endswith(
+        "mace_off23/MACE-OFF23_medium.model"
+    )
     assert MACE_OFF_MODELS["off23_large"].endswith("mace_off23/MACE-OFF23_large.model")
-    assert MACE_OFF_MODELS["off24_medium"].endswith("mace_off24/MACE-OFF24_medium.model")
+    assert MACE_OFF_MODELS["off24_medium"].endswith(
+        "mace_off24/MACE-OFF24_medium.model"
+    )
 
 
 @pytest.mark.slow
@@ -58,7 +62,9 @@ def test_infer_config_from_real_off23_small_checkpoint(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
-def test_load_mace_off_model_requires_explicit_sel_and_uses_plain_elements(tmp_path: Path) -> None:
+def test_load_mace_off_model_requires_explicit_sel_and_uses_plain_elements(
+    tmp_path: Path,
+) -> None:
     model = load_mace_off_model(model_name="off23_small", cache_dir=tmp_path, sel=64)
     assert isinstance(model, MaceModel)
     assert model.get_sel() == [64]
