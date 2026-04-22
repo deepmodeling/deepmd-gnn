@@ -397,7 +397,10 @@ class MaceModel(BaseModel):
         stat_file_path
             The path to the statistics files.
         preset_observed_type
-            Unused compatibility parameter accepted for newer deepmd-kit versions.
+            Optional observed element types to seed or override
+            ``self._observed_type``. This compatibility parameter is accepted for
+            newer deepmd-kit versions; when provided, it is used directly instead of
+            restoring or collecting observed types from statistics data.
         """
         if preset_observed_type is not None:
             self._observed_type = preset_observed_type
