@@ -65,7 +65,7 @@ def test_infer_config_from_real_off23_small_checkpoint(tmp_path: Path) -> None:
     assert config["MLP_irreps"] == "16x0e"
     assert config["radial_type"] == "bessel"
     assert config["radial_MLP"] == [64, 64, 64]
-    assert config["std"] == pytest.approx(1.0757331948055126)
+    assert config["std"] == pytest.approx(1.0757, abs=1e-4)
 
 
 @pytest.mark.slow

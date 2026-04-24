@@ -356,7 +356,7 @@ class MaceModel(BaseModel):
         self.atomic_numbers = atomic_numbers
 
     @property
-    def atomic_model(self) -> "MaceModel":
+    def atomic_model(self) -> Any:  # noqa: ANN401
         """Provide a compatibility view matching wrapped deepmd-kit models."""
         return self
 
