@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
+import deepmd.pt.model  # noqa: F401
 import pytest
 import torch
 
@@ -18,8 +19,12 @@ from deepmd_gnn.mace_off import (
     load_mace_off_model,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 def test_mace_off_model_urls_are_raw_github_paths() -> None:
+    """Model URLs should point to the real raw GitHub checkpoint paths."""
     assert MACE_OFF_MODELS["off23_small"].endswith("mace_off23/MACE-OFF23_small.model")
     assert MACE_OFF_MODELS["off23_medium"].endswith(
         "mace_off23/MACE-OFF23_medium.model",
@@ -32,6 +37,7 @@ def test_mace_off_model_urls_are_raw_github_paths() -> None:
 
 @pytest.mark.slow
 def test_download_real_model_uses_existing_url(tmp_path: Path) -> None:
+    """The official off23_small checkpoint should still be downloadable."""
     model_path = download_mace_off_model("off23_small", cache_dir=tmp_path)
     assert model_path.exists()
     assert model_path.stat().st_size > 0
@@ -39,6 +45,7 @@ def test_download_real_model_uses_existing_url(tmp_path: Path) -> None:
 
 @pytest.mark.slow
 def test_infer_config_from_real_off23_small_checkpoint(tmp_path: Path) -> None:
+    """A real checkpoint should yield the expected conservative config."""
     model_path = download_mace_off_model("off23_small", cache_dir=tmp_path)
     mace_model = _load_mace_checkpoint(model_path, device="cpu")
     config = _infer_deepmd_config(mace_model)
@@ -65,6 +72,7 @@ def test_infer_config_from_real_off23_small_checkpoint(tmp_path: Path) -> None:
 def test_load_mace_off_model_requires_explicit_sel_and_uses_plain_elements(
     tmp_path: Path,
 ) -> None:
+    """Loaded wrappers should keep explicit sel and ordinary element names only."""
     model = load_mace_off_model(model_name="off23_small", cache_dir=tmp_path, sel=64)
     assert isinstance(model, MaceModel)
     assert model.get_sel() == [64]
@@ -76,6 +84,7 @@ def test_load_mace_off_model_requires_explicit_sel_and_uses_plain_elements(
 
 @pytest.mark.slow
 def test_convert_mace_off_to_deepmd_scripts_model(tmp_path: Path) -> None:
+    """The conservative wrapper should still serialize to TorchScript."""
     output_file = tmp_path / "mace_off23_small_dp.pt"
     result = convert_mace_off_to_deepmd(
         output_file=str(output_file),

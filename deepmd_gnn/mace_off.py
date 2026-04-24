@@ -11,16 +11,19 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, TypedDict
 from urllib.request import urlretrieve
 
 import torch
+from deepmd.pt import model as _deepmd_pt_model  # noqa: F401
 from mace.modules import ScaleShiftMACE, gate_dict
 
 from deepmd_gnn.mace import ELEMENTS, MaceModel
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,25 @@ _SUPPORTED_RADIAL_BASES = {
 }
 
 
+class _InferredMaceConfig(TypedDict):
+    type_map: list[str]
+    r_max: float
+    num_radial_basis: int
+    num_cutoff_basis: int
+    max_ell: int
+    interaction: str
+    num_interactions: int
+    hidden_irreps: str
+    pair_repulsion: bool
+    distance_transform: str
+    correlation: int
+    gate: str
+    MLP_irreps: str
+    radial_type: str
+    radial_MLP: list[int]
+    std: float
+
+
 @contextmanager
 def _temporary_default_dtype(dtype: torch.dtype) -> Iterator[None]:
     old_dtype = torch.get_default_dtype()
@@ -78,7 +100,7 @@ def get_mace_off_cache_dir() -> Path:
 
 def download_mace_off_model(
     model_name: str = "small",
-    cache_dir: Optional[Path] = None,
+    cache_dir: Path | None = None,
     force_download: bool = False,
 ) -> Path:
     """Download a selected official MACE-OFF model file.
@@ -261,7 +283,7 @@ def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
         raise ValueError(msg)
 
 
-def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> dict[str, object]:
+def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> _InferredMaceConfig:
     _validate_checkpoint_scope(mace_model)
     atomic_numbers = mace_model.atomic_numbers.tolist()
 
@@ -314,11 +336,11 @@ def _validate_load_result(load_result: object) -> None:
 
 
 def load_mace_off_model(
-    model_name: Optional[str] = "small",
+    model_name: str | None = "small",
     *,
     sel: int,
-    model_path: Optional[Path] = None,
-    cache_dir: Optional[Path] = None,
+    model_path: Path | None = None,
+    cache_dir: Path | None = None,
     device: str = "cpu",
 ) -> MaceModel:
     """Load a supported MACE-OFF checkpoint as a DeePMD-GNN ``MaceModel``.
@@ -360,11 +382,28 @@ def load_mace_off_model(
 
     mace_model = _load_mace_checkpoint(model_path, device=device)
     config = _infer_deepmd_config(mace_model)
-    config["sel"] = sel
 
     source_dtype = mace_model.atomic_energies_fn.atomic_energies.dtype
     with _temporary_default_dtype(source_dtype):
-        deepmd_model = MaceModel(**config)
+        deepmd_model = MaceModel(
+            type_map=config["type_map"],
+            sel=sel,
+            r_max=config["r_max"],
+            num_radial_basis=config["num_radial_basis"],
+            num_cutoff_basis=config["num_cutoff_basis"],
+            max_ell=config["max_ell"],
+            interaction=config["interaction"],
+            num_interactions=config["num_interactions"],
+            hidden_irreps=config["hidden_irreps"],
+            pair_repulsion=config["pair_repulsion"],
+            distance_transform=config["distance_transform"],
+            correlation=config["correlation"],
+            gate=config["gate"],
+            MLP_irreps=config["MLP_irreps"],
+            radial_type=config["radial_type"],
+            radial_MLP=config["radial_MLP"],
+            std=config["std"],
+        )
 
     load_result = deepmd_model.model.load_state_dict(
         mace_model.state_dict(),
@@ -379,9 +418,9 @@ def convert_mace_off_to_deepmd(
     output_file: str,
     *,
     sel: int,
-    model_name: Optional[str] = "small",
-    model_path: Optional[Path] = None,
-    cache_dir: Optional[Path] = None,
+    model_name: str | None = "small",
+    model_path: Path | None = None,
+    cache_dir: Path | None = None,
     device: str = "cpu",
 ) -> Path:
     """Serialize a loaded MACE-OFF wrapper as a TorchScript DeePMD-GNN model.
