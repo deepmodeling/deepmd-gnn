@@ -367,7 +367,8 @@ def load_mace_off_model(
         deepmd_model = MaceModel(**config)
 
     load_result = deepmd_model.model.load_state_dict(
-        mace_model.state_dict(), strict=False
+        mace_model.state_dict(),
+        strict=False,
     )
     _validate_load_result(load_result)
     deepmd_model.eval()

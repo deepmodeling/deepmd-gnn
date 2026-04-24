@@ -22,11 +22,11 @@ from deepmd_gnn.mace_off import (
 def test_mace_off_model_urls_are_raw_github_paths() -> None:
     assert MACE_OFF_MODELS["off23_small"].endswith("mace_off23/MACE-OFF23_small.model")
     assert MACE_OFF_MODELS["off23_medium"].endswith(
-        "mace_off23/MACE-OFF23_medium.model"
+        "mace_off23/MACE-OFF23_medium.model",
     )
     assert MACE_OFF_MODELS["off23_large"].endswith("mace_off23/MACE-OFF23_large.model")
     assert MACE_OFF_MODELS["off24_medium"].endswith(
-        "mace_off24/MACE-OFF24_medium.model"
+        "mace_off24/MACE-OFF24_medium.model",
     )
 
 
