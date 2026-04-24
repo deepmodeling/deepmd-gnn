@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Wrapper for MACE models."""
 
+import importlib
 import json
 from copy import deepcopy
 from typing import Any, Optional
@@ -55,6 +56,43 @@ from mace.modules import (
 
 import deepmd_gnn.op  # noqa: F401
 from deepmd_gnn import env as deepmd_gnn_env
+
+
+def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
+    try:
+        stat_mod = importlib.import_module("deepmd.dpmodel.utils.stat")
+    except ImportError:
+
+        def collect_observed_types(sampled, type_map) -> list[str]:  # noqa: ANN001
+            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+            _ = sampled, type_map
+            return []
+
+        def _restore_observed_type_from_file(stat_file_path):  # noqa: ANN001, ANN202
+            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+            _ = stat_file_path
+
+        def _save_observed_type_to_file(stat_file_path, observed_type):  # noqa: ANN001, ANN202
+            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
+            _ = stat_file_path, observed_type
+
+        return (
+            _restore_observed_type_from_file,
+            _save_observed_type_to_file,
+            collect_observed_types,
+        )
+    else:
+        restore = stat_mod._restore_observed_type_from_file  # noqa: SLF001
+        save = stat_mod._save_observed_type_to_file  # noqa: SLF001
+        collect = stat_mod.collect_observed_types
+        return (restore, save, collect)
+
+
+(
+    _restore_observed_type_from_file,
+    _save_observed_type_to_file,
+    collect_observed_types,
+) = _load_observed_type_stat_compat()
 
 ELEMENTS = [
     "H",
@@ -228,6 +266,7 @@ class MaceModel(BaseModel):
     """
 
     mm_types: list[int]
+    _observed_type: Optional[list[str]]
 
     def __init__(
         self,
@@ -274,6 +313,7 @@ class MaceModel(BaseModel):
         self.ntypes = len(type_map)
         self.rcut = r_max
         self.num_interactions = num_interactions
+        self._observed_type = None
         atomic_numbers = []
         self.preset_out_bias: dict[str, list] = {"energy": []}
         self.mm_types = []
@@ -315,10 +355,32 @@ class MaceModel(BaseModel):
         )
         self.atomic_numbers = atomic_numbers
 
+    @property
+    def atomic_model(self) -> "MaceModel":
+        """Provide a compatibility view matching wrapped deepmd-kit models."""
+        return self
+
+    @property
+    def observed_type(self) -> Optional[list[str]]:
+        """Observed element types collected during statistics."""
+        return self._observed_type
+
+    @torch.jit.export
+    def get_observed_type_list(self) -> list[str]:
+        """Get observed element types collected during statistics."""
+        observed = self._observed_type
+        if observed is None:
+            return []
+        observed_type_list = torch.jit.annotate(list[str], [])
+        for item in observed:
+            observed_type_list.append(item)
+        return observed_type_list
+
     def compute_or_load_stat(
         self,
         sampled_func,  # noqa: ANN001
         stat_file_path: Optional[DPPath] = None,
+        preset_observed_type: Optional[list[str]] = None,
     ) -> None:
         """Compute or load the statistics parameters of the model.
 
@@ -334,7 +396,23 @@ class MaceModel(BaseModel):
             The sampled data frames from different data systems.
         stat_file_path
             The path to the statistics files.
+        preset_observed_type
+            Optional observed element types to seed or override
+            ``self._observed_type``. This compatibility parameter is accepted for
+            newer deepmd-kit versions; when provided, it is used directly instead of
+            restoring or collecting observed types from statistics data.
         """
+        if preset_observed_type is not None:
+            self._observed_type = preset_observed_type
+        else:
+            if stat_file_path is None:
+                observed = collect_observed_types(sampled_func(), self.type_map)
+            else:
+                observed = _restore_observed_type_from_file(stat_file_path)
+                if observed is None:
+                    observed = collect_observed_types(sampled_func(), self.type_map)
+                    _save_observed_type_to_file(stat_file_path, observed)
+            self._observed_type = observed
         bias_out, _ = compute_output_stats(
             sampled_func,
             self.get_ntypes(),
