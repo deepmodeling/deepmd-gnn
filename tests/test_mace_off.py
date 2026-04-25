@@ -49,7 +49,7 @@ def _native_mace_reference_outputs(
     extended_coord_ff = extended_coord.view(nf * nall, 3)
     default_dtype = mace_model.atomic_energies_fn.atomic_energies.dtype
     extended_coord_ff = extended_coord_ff.to(default_dtype)
-    extended_coord_ff.requires_grad_(True)
+    extended_coord_ff.requires_grad_(requires_grad=True)
 
     extended_atype = extended_atype.to(torch.int64)
     edge_index = torch.ops.deepmd_gnn.edge_index(
@@ -64,7 +64,9 @@ def _native_mace_reference_outputs(
         device=extended_coord_ff.device,
     )
     one_hot.scatter_(
-        dim=-1, index=extended_atype.view(nf * nall).unsqueeze(-1), value=1
+        dim=-1,
+        index=extended_atype.view(nf * nall).unsqueeze(-1),
+        value=1,
     )
 
     ret = mace_model.forward(
