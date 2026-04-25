@@ -98,6 +98,11 @@ ignore = [
 convention = "numpy"
 
 [tool.ruff.lint.extend-per-file-ignores]
+"deepmd_gnn/mace.py" = [
+    "TC002", # TorchScript-facing module keeps some runtime-imported types
+    "UP045", # TorchScript is sensitive to Optional/type-annotation rewrites
+    "FA102", # avoid forcing future annotations in TorchScript-facing module
+]
 "tests/**/*.py" = [
     "S101", # asserts allowed in tests...
     "ANN",
