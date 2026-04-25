@@ -35,13 +35,15 @@ def _native_mace_reference_outputs(
 ) -> dict[str, torch.Tensor]:
     """Evaluate a native MACE checkpoint on the same graph path as the wrapper."""
     nloc = atype.shape[1]
-    extended_coord, extended_atype, mapping, nlist = extend_input_and_build_neighbor_list(
-        coord,
-        atype,
-        float(mace_model.r_max),
-        [sel],
-        mixed_types=True,
-        box=box,
+    extended_coord, extended_atype, mapping, nlist = (
+        extend_input_and_build_neighbor_list(
+            coord,
+            atype,
+            float(mace_model.r_max),
+            [sel],
+            mixed_types=True,
+            box=box,
+        )
     )
     nf, nall = extended_atype.shape
 

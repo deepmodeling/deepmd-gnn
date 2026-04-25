@@ -344,9 +344,7 @@ class MaceModel(BaseModel):
             distance_transform=distance_transform,
             correlation=correlation,
             gate=gate_dict[gate],
-            interaction_cls_first=interaction_classes[
-                "RealAgnosticInteractionBlock"
-            ],
+            interaction_cls_first=interaction_classes["RealAgnosticInteractionBlock"],
             MLP_irreps=o3.Irreps(MLP_irreps),
             atomic_inter_scale=std,
             atomic_inter_shift=0.0,
