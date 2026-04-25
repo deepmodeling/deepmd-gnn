@@ -63,7 +63,9 @@ def _native_mace_reference_outputs(
         dtype=default_dtype,
         device=extended_coord_ff.device,
     )
-    one_hot.scatter_(dim=-1, index=extended_atype.view(nf * nall).unsqueeze(-1), value=1)
+    one_hot.scatter_(
+        dim=-1, index=extended_atype.view(nf * nall).unsqueeze(-1), value=1
+    )
 
     ret = mace_model.forward(
         {
