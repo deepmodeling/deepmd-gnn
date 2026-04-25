@@ -838,7 +838,7 @@ class MaceModel(BaseModel):
         }
 
     @classmethod
-    def deserialize(cls, data: dict) -> "MaceModel":
+    def deserialize(cls, data: dict) -> MaceModel:
         """Deserialize the model."""
         data = data.copy()
         if not (data.pop("@class") == "Model" and data.pop("type") == "mace"):
@@ -925,7 +925,7 @@ class MaceModel(BaseModel):
         return ModelOutputDef(self.fitting_output_def())
 
     @classmethod
-    def get_model(cls, model_params: dict) -> "MaceModel":
+    def get_model(cls, model_params: dict) -> MaceModel:
         """Get the model by the parameters.
 
         Parameters
