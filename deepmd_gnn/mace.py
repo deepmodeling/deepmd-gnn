@@ -45,6 +45,9 @@ from deepmd.utils.version import (
 from e3nn import (
     o3,
 )
+from e3nn.util.jit import (
+    script,
+)
 from mace.modules import (
     ScaleShiftMACE,
     gate_dict,
@@ -328,29 +331,33 @@ class MaceModel(BaseModel):
                 self.preset_out_bias["energy"].append([0])
                 self.mm_types.append(ii)
 
-        self.model = ScaleShiftMACE(
-            r_max=r_max,
-            num_bessel=num_radial_basis,
-            num_polynomial_cutoff=num_cutoff_basis,
-            max_ell=max_ell,
-            interaction_cls=interaction_classes[interaction],
-            num_interactions=num_interactions,
-            num_elements=self.ntypes,
-            hidden_irreps=o3.Irreps(hidden_irreps),
-            atomic_energies=torch.zeros(self.ntypes),  # pylint: disable=no-explicit-device,no-explicit-dtype
-            avg_num_neighbors=self.avg_num_neighbors,
-            atomic_numbers=atomic_numbers,
-            pair_repulsion=pair_repulsion,
-            distance_transform=distance_transform,
-            correlation=correlation,
-            gate=gate_dict[gate],
-            interaction_cls_first=interaction_classes["RealAgnosticInteractionBlock"],
-            MLP_irreps=o3.Irreps(MLP_irreps),
-            atomic_inter_scale=std,
-            atomic_inter_shift=0.0,
-            radial_MLP=radial_MLP,
-            radial_type=radial_type,
-        ).to(env.DEVICE)
+        self.model = script(
+            ScaleShiftMACE(
+                r_max=r_max,
+                num_bessel=num_radial_basis,
+                num_polynomial_cutoff=num_cutoff_basis,
+                max_ell=max_ell,
+                interaction_cls=interaction_classes[interaction],
+                num_interactions=num_interactions,
+                num_elements=self.ntypes,
+                hidden_irreps=o3.Irreps(hidden_irreps),
+                atomic_energies=torch.zeros(self.ntypes),  # pylint: disable=no-explicit-device,no-explicit-dtype
+                avg_num_neighbors=self.avg_num_neighbors,
+                atomic_numbers=atomic_numbers,
+                pair_repulsion=pair_repulsion,
+                distance_transform=distance_transform,
+                correlation=correlation,
+                gate=gate_dict[gate],
+                interaction_cls_first=interaction_classes[
+                    "RealAgnosticInteractionBlock"
+                ],
+                MLP_irreps=o3.Irreps(MLP_irreps),
+                atomic_inter_scale=std,
+                atomic_inter_shift=0.0,
+                radial_MLP=radial_MLP,
+                radial_type=radial_type,
+            ).to(env.DEVICE),
+        )
         self.atomic_numbers = atomic_numbers
 
     @property

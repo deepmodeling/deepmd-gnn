@@ -418,6 +418,7 @@ def load_mace_off_model(
         strict=False,
     )
     _validate_load_result(load_result)
+    deepmd_model.model = mace_model
     deepmd_model.eval()
     return deepmd_model
 
