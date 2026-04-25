@@ -18,6 +18,7 @@ from urllib.request import urlretrieve
 
 import torch
 from deepmd.pt import model as _deepmd_pt_model  # noqa: F401
+from e3nn.util.jit import script as e3nn_script
 from mace.modules import ScaleShiftMACE, gate_dict
 
 from deepmd_gnn.mace import ELEMENTS, MaceModel
@@ -72,6 +73,7 @@ class _InferredMaceConfig(TypedDict):
     radial_type: str
     radial_MLP: list[int]
     std: float
+    avg_num_neighbors: float
 
 
 @contextmanager
@@ -262,6 +264,10 @@ def _infer_scale(mace_model: ScaleShiftMACE) -> float:
     return float(scale_state["scale"])
 
 
+def _infer_avg_num_neighbors(mace_model: ScaleShiftMACE) -> float:
+    return float(mace_model.interactions[0].avg_num_neighbors)
+
+
 def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
     atomic_numbers = mace_model.atomic_numbers.tolist()
     _validate_atomic_numbers(atomic_numbers)
@@ -304,6 +310,7 @@ def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> _InferredMaceConfig:
         "radial_type": _infer_radial_type(mace_model),
         "radial_MLP": _infer_radial_mlp(mace_model),
         "std": _infer_scale(mace_model),
+        "avg_num_neighbors": _infer_avg_num_neighbors(mace_model),
     }
 
 
@@ -403,6 +410,7 @@ def load_mace_off_model(
             radial_type=config["radial_type"],
             radial_MLP=config["radial_MLP"],
             std=config["std"],
+            avg_num_neighbors=config["avg_num_neighbors"],
         )
 
     load_result = deepmd_model.model.load_state_dict(
@@ -438,6 +446,7 @@ def convert_mace_off_to_deepmd(
         device=device,
     )
     output_path = Path(output_file)
+    model.model = e3nn_script(model.model)
     scripted_model = torch.jit.script(model)
     torch.jit.save(scripted_model, str(output_path))
     return output_path

@@ -35,7 +35,7 @@ def _native_mace_reference_outputs(
 ) -> dict[str, torch.Tensor]:
     """Evaluate a native MACE checkpoint on the same graph path as the wrapper."""
     nloc = atype.shape[1]
-    extended_coord, extended_atype, _, nlist = extend_input_and_build_neighbor_list(
+    extended_coord, extended_atype, mapping, nlist = extend_input_and_build_neighbor_list(
         coord,
         atype,
         float(mace_model.r_max),
@@ -58,6 +58,24 @@ def _native_mace_reference_outputs(
         torch.tensor([], dtype=torch.int64, device="cpu"),
     ).T
 
+    if mapping is not None and nloc < nall:
+        mapping_ff = mapping.view(nf * nall) + torch.arange(
+            0,
+            nf * nall,
+            nall,
+            dtype=mapping.dtype,
+            device=mapping.device,
+        ).unsqueeze(-1).expand(nf, nall).reshape(-1)
+        shifts_atoms = extended_coord_ff - extended_coord_ff[mapping_ff]
+        shifts = shifts_atoms[edge_index[1]] - shifts_atoms[edge_index[0]]
+        edge_index = mapping_ff[edge_index]
+    else:
+        shifts = torch.zeros(
+            (edge_index.shape[1], 3),
+            dtype=default_dtype,
+            device=extended_coord_ff.device,
+        )
+
     one_hot = torch.zeros(
         (nf * nall, ntypes),
         dtype=default_dtype,
@@ -72,11 +90,7 @@ def _native_mace_reference_outputs(
     ret = mace_model.forward(
         {
             "positions": extended_coord_ff,
-            "shifts": torch.zeros(
-                (edge_index.shape[1], 3),
-                dtype=default_dtype,
-                device=extended_coord_ff.device,
-            ),
+            "shifts": shifts,
             "cell": torch.eye(
                 3,
                 dtype=default_dtype,
@@ -132,10 +146,31 @@ def _native_mace_reference_outputs(
         3,
     ).to(coord.dtype).unsqueeze(-2)
 
+    if mapping is not None:
+        force_local = torch.scatter_reduce(
+            torch.zeros((nf, nloc, 3), dtype=coord.dtype, device=force.device),
+            1,
+            mapping.unsqueeze(-1).expand(nf, nall, 3),
+            force.to(coord.dtype),
+            reduce="sum",
+        )
+        atomic_virial_local = torch.scatter_reduce(
+            torch.zeros((nf, nloc, 9), dtype=coord.dtype, device=force.device),
+            1,
+            mapping.unsqueeze(-1).expand(nf, nall, 9),
+            atomic_virial.view(nf, nall, 9),
+            reduce="sum",
+        )
+        force_out = force_local
+        virial_out = atomic_virial_local.sum(dim=1).view(nf, 9)
+    else:
+        force_out = force[:, :nloc, :].to(coord.dtype)
+        virial_out = atomic_virial.sum(dim=1).view(nf, 9)
+
     return {
         "energy": energy.to(coord.dtype),
-        "force": force[:, :nloc, :].to(coord.dtype),
-        "virial": atomic_virial.sum(dim=1).view(nf, 9),
+        "force": force_out,
+        "virial": virial_out,
     }
 
 
