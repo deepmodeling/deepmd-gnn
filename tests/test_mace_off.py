@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import deepmd.pt.model  # noqa: F401
 import pytest
 import torch
+from deepmd.pt.utils.nlist import extend_input_and_build_neighbor_list
 
 from deepmd_gnn.mace import MaceModel
 from deepmd_gnn.mace_off import (
@@ -21,6 +22,117 @@ from deepmd_gnn.mace_off import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _native_mace_reference_outputs(
+    mace_model: torch.nn.Module,
+    *,
+    coord: torch.Tensor,
+    atype: torch.Tensor,
+    box: torch.Tensor,
+    sel: int,
+    ntypes: int,
+) -> dict[str, torch.Tensor]:
+    """Evaluate a native MACE checkpoint on the same graph path as the wrapper."""
+    nloc = atype.shape[1]
+    extended_coord, extended_atype, _, nlist = extend_input_and_build_neighbor_list(
+        coord,
+        atype,
+        float(mace_model.r_max),
+        [sel],
+        mixed_types=True,
+        box=box,
+    )
+    nf, nall = extended_atype.shape
+
+    extended_coord = extended_coord.view(nf, nall, 3)
+    extended_coord_ff = extended_coord.view(nf * nall, 3)
+    default_dtype = mace_model.atomic_energies_fn.atomic_energies.dtype
+    extended_coord_ff = extended_coord_ff.to(default_dtype)
+    extended_coord_ff.requires_grad_(True)
+
+    extended_atype = extended_atype.to(torch.int64)
+    edge_index = torch.ops.deepmd_gnn.edge_index(
+        nlist.to(torch.int64),
+        extended_atype,
+        torch.tensor([], dtype=torch.int64, device="cpu"),
+    ).T
+
+    one_hot = torch.zeros(
+        (nf * nall, ntypes),
+        dtype=default_dtype,
+        device=extended_coord_ff.device,
+    )
+    one_hot.scatter_(dim=-1, index=extended_atype.view(nf * nall).unsqueeze(-1), value=1)
+
+    ret = mace_model.forward(
+        {
+            "positions": extended_coord_ff,
+            "shifts": torch.zeros(
+                (edge_index.shape[1], 3),
+                dtype=default_dtype,
+                device=extended_coord_ff.device,
+            ),
+            "cell": torch.eye(
+                3,
+                dtype=default_dtype,
+                device=extended_coord_ff.device,
+            )
+            * 1000.0,
+            "edge_index": edge_index,
+            "batch": torch.zeros(
+                [nf * nall],
+                dtype=torch.int64,
+                device=extended_coord_ff.device,
+            ),
+            "node_attrs": one_hot,
+            "ptr": torch.tensor(
+                [0, nf * nall],
+                dtype=torch.int64,
+                device=extended_coord_ff.device,
+            ),
+            "weight": torch.tensor(
+                [1.0],
+                dtype=default_dtype,
+                device=extended_coord_ff.device,
+            ),
+        },
+        compute_force=False,
+        compute_virials=False,
+        compute_stress=False,
+        compute_displacement=False,
+        training=False,
+    )
+
+    atom_energy = ret["node_energy"]
+    if atom_energy is None:
+        msg = "Native MACE model returned no node_energy"
+        raise ValueError(msg)
+    atom_energy = atom_energy.view(nf, nall)[:, :nloc]
+    energy = atom_energy.sum(dim=1).view(nf, 1)
+
+    force = torch.autograd.grad(
+        outputs=[energy],
+        inputs=[extended_coord_ff],
+        grad_outputs=[torch.ones_like(energy)],
+        retain_graph=True,
+        create_graph=False,
+    )[0]
+    if force is None:
+        msg = "Native MACE model returned no force gradient"
+        raise ValueError(msg)
+    force = -force.view(nf, nall, 3)
+    atomic_virial = force.to(coord.dtype).unsqueeze(-1) @ extended_coord_ff.view(
+        nf,
+        nall,
+        3,
+    ).to(coord.dtype).unsqueeze(-2)
+
+    return {
+        "energy": energy.to(coord.dtype),
+        "force": force[:, :nloc, :].to(coord.dtype),
+        "virial": atomic_virial.sum(dim=1).view(nf, 9),
+    }
 
 
 def test_mace_off_model_urls_are_raw_github_paths() -> None:
@@ -80,6 +192,51 @@ def test_load_mace_off_model_requires_explicit_sel_and_uses_plain_elements(
     assert all(not atom_type.startswith("m") for atom_type in model.get_type_map())
     assert "HW" not in model.get_type_map()
     assert "OW" not in model.get_type_map()
+
+
+@pytest.mark.slow
+def test_load_mace_off_model_matches_native_mace_predictions(tmp_path: Path) -> None:
+    """Wrapped DeePMD-GNN predictions should match the native MACE checkpoint."""
+    model_path = download_mace_off_model("off23_small", cache_dir=tmp_path)
+    native_model = _load_mace_checkpoint(model_path, device="cpu")
+    native_model.eval()
+    wrapped_model = load_mace_off_model(model_path=model_path, sel=64, device="cpu")
+
+    coord = torch.tensor(
+        [[[0.0, 0.0, 0.0], [0.9572, 0.0, 0.0], [-0.2390, 0.9266, 0.0]]],
+        dtype=torch.float64,
+    ).view(1, 9)
+    atype = torch.tensor([[3, 0, 0]], dtype=torch.int64)
+    box = (torch.eye(3, dtype=torch.float64) * 20.0).view(1, 9)
+
+    native_outputs = _native_mace_reference_outputs(
+        native_model,
+        coord=coord,
+        atype=atype,
+        box=box,
+        sel=64,
+        ntypes=wrapped_model.get_ntypes(),
+    )
+    wrapped_outputs = wrapped_model(coord=coord, atype=atype, box=box)
+
+    torch.testing.assert_close(
+        wrapped_outputs["energy"],
+        native_outputs["energy"],
+        rtol=1e-5,
+        atol=5e-6,
+    )
+    torch.testing.assert_close(
+        wrapped_outputs["force"],
+        native_outputs["force"],
+        rtol=1e-5,
+        atol=5e-6,
+    )
+    torch.testing.assert_close(
+        wrapped_outputs["virial"],
+        native_outputs["virial"],
+        rtol=1e-5,
+        atol=5e-6,
+    )
 
 
 @pytest.mark.slow
