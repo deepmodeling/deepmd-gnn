@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Wrapper for MACE models."""
 
+from __future__ import annotations
+
 import importlib
 import json
 from copy import deepcopy
