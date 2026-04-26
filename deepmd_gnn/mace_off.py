@@ -9,12 +9,9 @@ DPRc/QM/MM atom-type semantics from the checkpoint.
 
 from __future__ import annotations
 
-import logging
-import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
-from urllib.request import urlretrieve
 
 import torch
 from deepmd.pt import model as _deepmd_pt_model  # noqa: F401
@@ -22,26 +19,10 @@ from e3nn.util.jit import script as e3nn_script
 from mace.modules import ScaleShiftMACE, gate_dict
 
 from deepmd_gnn.mace import ELEMENTS, MaceModel
+from deepmd_gnn.mace_off_cli import download_mace_off_model
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-logger = logging.getLogger(__name__)
-
-_MACE_OFF_BASE_URL = "https://raw.githubusercontent.com/ACEsuit/mace-off/v0.2"
-
-MACE_OFF_MODELS = {
-    "off23_small": f"{_MACE_OFF_BASE_URL}/mace_off23/MACE-OFF23_small.model",
-    "off23_medium": f"{_MACE_OFF_BASE_URL}/mace_off23/MACE-OFF23_medium.model",
-    "off23_large": f"{_MACE_OFF_BASE_URL}/mace_off23/MACE-OFF23_large.model",
-    "off24_medium": f"{_MACE_OFF_BASE_URL}/mace_off24/MACE-OFF24_medium.model",
-}
-
-_MACE_OFF_MODEL_ALIASES = {
-    "small": "off23_small",
-    "medium": "off23_medium",
-    "large": "off23_large",
-}
 
 _ALLOWED_MISSING_STATE_DICT_SUFFIXES = ("_zeroed",)
 
@@ -84,66 +65,6 @@ def _temporary_default_dtype(dtype: torch.dtype) -> Iterator[None]:
         yield
     finally:
         torch.set_default_dtype(old_dtype)
-
-
-def _canonical_model_name(model_name: str) -> str:
-    return _MACE_OFF_MODEL_ALIASES.get(model_name, model_name)
-
-
-def get_mace_off_cache_dir() -> Path:
-    """Get the cache directory for MACE-OFF models."""
-    if "XDG_CACHE_HOME" in os.environ:
-        cache_dir = Path(os.environ["XDG_CACHE_HOME"]) / "deepmd-gnn" / "mace-off"
-    else:
-        cache_dir = Path.home() / ".cache" / "deepmd-gnn" / "mace-off"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
-
-
-def download_mace_off_model(
-    model_name: str = "small",
-    cache_dir: Path | None = None,
-    force_download: bool = False,
-) -> Path:
-    """Download a selected official MACE-OFF model file.
-
-    Parameters
-    ----------
-    model_name
-        Canonical model name (for example ``off23_small``) or one of the
-        compatibility aliases ``small`` / ``medium`` / ``large``.
-    cache_dir
-        Cache directory. Defaults to :func:`get_mace_off_cache_dir`.
-    force_download
-        Re-download even if the cached file already exists.
-    """
-    canonical_name = _canonical_model_name(model_name)
-    if canonical_name not in MACE_OFF_MODELS:
-        msg = (
-            f"Unknown MACE-OFF model: {model_name}. Available models: "
-            f"{sorted(MACE_OFF_MODELS)}"
-        )
-        raise ValueError(msg)
-
-    if cache_dir is None:
-        cache_dir = get_mace_off_cache_dir()
-    else:
-        cache_dir = Path(cache_dir)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-    url = MACE_OFF_MODELS[canonical_name]
-    filename = Path(url).name
-    model_path = cache_dir / filename
-
-    if not model_path.exists() or force_download:
-        logger.info("Downloading MACE-OFF model %s", canonical_name)
-        logger.info("URL: %s", url)
-        logger.info("Destination: %s", model_path)
-        urlretrieve(url, model_path)  # noqa: S310
-    else:
-        logger.info("Using cached model: %s", model_path)
-
-    return model_path
 
 
 def _validate_atomic_numbers(atomic_numbers: list[int]) -> None:
@@ -323,7 +244,7 @@ def _load_mace_checkpoint(model_path: Path, device: str) -> ScaleShiftMACE:
     conservative loader needs access to the original ``ScaleShiftMACE`` object,
     not just a plain state dict. That implies normal Python unpickling semantics:
     callers should only use trusted checkpoint files, whether downloaded from the
-    official ``MACE_OFF_MODELS`` URLs or supplied via a trusted local path.
+    official download helper or supplied via a trusted local path.
     """
     model = torch.load(str(model_path), map_location=device, weights_only=False)
     if not isinstance(model, ScaleShiftMACE):
@@ -464,9 +385,7 @@ def convert_mace_off_to_deepmd(
 
 
 __all__ = [
-    "MACE_OFF_MODELS",
     "convert_mace_off_to_deepmd",
     "download_mace_off_model",
-    "get_mace_off_cache_dir",
     "load_mace_off_model",
 ]

@@ -37,6 +37,7 @@ keywords = [
 ]
 
 [project.scripts]
+deepmd-gnn = "deepmd_gnn.cli:main"
 
 [project.entry-points."deepmd.pt"]
 mace = "deepmd_gnn.mace:MaceModel"
