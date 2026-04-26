@@ -276,8 +276,9 @@ class ModelTestCase:
                 "box": cell,
                 "aparam": aparam,
                 "fparam": fparam,
-                "do_atomic_virial": True,
             }
+            if "atom_virial" in self.output_def:
+                input_dict["do_atomic_virial"] = True
             if test_spin:
                 input_dict["spin"] = spin
             ret.append(module(**input_dict))
@@ -289,8 +290,9 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
                 "mapping": mapping_large,
-                "do_atomic_virial": True,
             }
+            if "atom_virial" in self.output_def:
+                input_dict_lower["do_atomic_virial"] = True
             if test_spin:
                 input_dict_lower["extended_spin"] = spin_ext
 
