@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -89,9 +90,11 @@ def test_cli_convert_invokes_helper(
         recorded["device"] = device
         return Path(output_file)
 
-    import deepmd_gnn.mace_off as mace_off
-
-    monkeypatch.setattr(mace_off, "convert_mace_off_to_deepmd", fake_convert)
+    monkeypatch.setattr(
+        import_module("deepmd_gnn.mace_off"),
+        "convert_mace_off_to_deepmd",
+        fake_convert,
+    )
 
     exit_code = cli.main(
         [

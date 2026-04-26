@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from deepmd_gnn.mace_off_cli import (
     MACE_OFF_MODEL_CHOICES,
@@ -89,6 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parser_error(parser: argparse.ArgumentParser, message: str) -> NoReturn:
+    parser.error(message)
+    raise AssertionError("unreachable")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command-line interface."""
     parser = build_parser()
@@ -96,7 +102,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "mace-off":
         if args.mace_off_command == "convert":
-            from deepmd_gnn.mace_off import convert_mace_off_to_deepmd
+            convert_mace_off_to_deepmd = import_module(
+                "deepmd_gnn.mace_off",
+            ).convert_mace_off_to_deepmd
 
             output_path = convert_mace_off_to_deepmd(
                 output_file=args.output_file,
@@ -118,4 +126,4 @@ def main(argv: Sequence[str] | None = None) -> int:
             sys.stdout.write(f"{get_mace_off_cache_dir()}\n")
             return 0
 
-    parser.error("Unhandled command")
+    _parser_error(parser, "Unhandled command")

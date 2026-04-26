@@ -19,8 +19,8 @@ from deepmd_gnn.mace_off import (
     load_mace_off_model,
 )
 from deepmd_gnn.mace_off_cli import (
-    MACE_OFF_MODELS,
     MACE_OFF_MODEL_SHA256,
+    MACE_OFF_MODELS,
     get_mace_off_cache_dir,
 )
 
@@ -267,7 +267,9 @@ def test_download_mace_off_model_rejects_bad_download_digest(
         "deepmd_gnn.mace_off_cli.urlretrieve",
         lambda _url, filename: Path(filename).write_bytes(b"bad"),
     )
-    monkeypatch.setattr("deepmd_gnn.mace_off_cli._sha256sum", lambda _path: "bad-digest")
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off_cli._sha256sum", lambda _path: "bad-digest"
+    )
 
     with pytest.raises(ValueError, match="SHA256 mismatch"):
         download_mace_off_model("off23_small", cache_dir=tmp_path)

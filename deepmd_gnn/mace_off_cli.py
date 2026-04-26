@@ -133,8 +133,8 @@ def download_mace_off_model(
 
 
 __all__ = [
-    "MACE_OFF_MODEL_CHOICES",
     "MACE_OFF_MODELS",
+    "MACE_OFF_MODEL_CHOICES",
     "MACE_OFF_MODEL_SHA256",
     "download_mace_off_model",
     "get_mace_off_cache_dir",
