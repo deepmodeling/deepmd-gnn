@@ -188,6 +188,46 @@ Type maps that starts with `m` (such as `mH`) or `OW` or `HW` will be recognized
 Two MM atoms will not build edges with each other.
 Such GNN+DPRc model can be directly used in AmberTools24.
 
+## Conservative MACE-OFF checkpoint loading
+
+`deepmd_gnn.mace_off` provides a conservative bridge from selected official
+MACE-OFF checkpoints into DeePMD-GNN. The goal is to recover the parts that are
+really stored in the checkpoint while avoiding guesses about wrapper-only
+runtime semantics.
+
+In practice, this path intentionally does less inference than the broader
+DPRc/QM/MM machinery:
+
+- it infers ordinary element `type_map` entries from checkpoint
+  `atomic_numbers`
+- it restores checkpoint-side model semantics such as `avg_num_neighbors` from
+  the original `ScaleShiftMACE` object instead of reusing DeePMD's runtime
+  neighbor cap
+- it requires an explicit `sel` value, because `sel` is a DeePMD runtime
+  neighbor-list cap and is not stored in the MACE-OFF checkpoint
+- it does **not** infer DPRc/MM labels such as `mH`, `mC`, `HW`, or `OW`
+- `load_mace_off_model()` keeps the original eager MACE checkpoint model inside
+  the wrapper for closer native/wrapper parity, while
+  `convert_mace_off_to_deepmd()` scripts the model only at export time
+- it uses `torch.load(..., weights_only=False)` to recover the original
+  `ScaleShiftMACE` object, so callers should only use trusted checkpoints
+
+Example:
+
+```python
+from deepmd_gnn.mace_off import convert_mace_off_to_deepmd
+
+convert_mace_off_to_deepmd(
+    output_file="mace_off23_small_dp.pt",
+    model_name="off23_small",
+    sel=64,
+)
+```
+
+This produces a scripted DeePMD-GNN wrapper. That serialization step is useful,
+but it is still a good idea to validate the final downstream workflow you care
+about (for example in LAMMPS or AMBER).
+
 ## Examples
 
 - [examples/water](examples/water)

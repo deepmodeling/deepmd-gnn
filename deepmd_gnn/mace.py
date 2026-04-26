@@ -287,6 +287,7 @@ class MaceModel(BaseModel):
         radial_type: str = "bessel",
         radial_MLP: list[int] = [64, 64, 64],  # noqa: B006
         std: float = 1,
+        avg_num_neighbors: float | None = None,
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
         super().__init__(**kwargs)
@@ -308,6 +309,7 @@ class MaceModel(BaseModel):
             "radial_type": radial_type,
             "radial_MLP": radial_MLP,
             "std": std,
+            "avg_num_neighbors": avg_num_neighbors,
         }
         self.type_map = type_map
         self.ntypes = len(type_map)
@@ -318,6 +320,9 @@ class MaceModel(BaseModel):
         self.preset_out_bias: dict[str, list] = {"energy": []}
         self.mm_types = []
         self.sel = sel
+        if avg_num_neighbors is None:
+            avg_num_neighbors = float(sel)
+        self.avg_num_neighbors = float(avg_num_neighbors)
         for ii, tt in enumerate(type_map):
             atomic_numbers.append(PeriodicTable[tt])
             if not tt.startswith("m") and tt not in {"HW", "OW"}:
@@ -337,7 +342,7 @@ class MaceModel(BaseModel):
                 num_elements=self.ntypes,
                 hidden_irreps=o3.Irreps(hidden_irreps),
                 atomic_energies=torch.zeros(self.ntypes),  # pylint: disable=no-explicit-device,no-explicit-dtype
-                avg_num_neighbors=sel,
+                avg_num_neighbors=self.avg_num_neighbors,
                 atomic_numbers=atomic_numbers,
                 pair_repulsion=pair_repulsion,
                 distance_transform=distance_transform,
@@ -356,7 +361,7 @@ class MaceModel(BaseModel):
         self.atomic_numbers = atomic_numbers
 
     @property
-    def atomic_model(self) -> "MaceModel":
+    def atomic_model(self) -> Any:  # noqa: ANN401
         """Provide a compatibility view matching wrapped deepmd-kit models."""
         return self
 

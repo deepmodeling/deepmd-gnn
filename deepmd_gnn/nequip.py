@@ -230,7 +230,7 @@ class NequipModel(BaseModel):
         )
 
     @property
-    def atomic_model(self) -> "NequipModel":
+    def atomic_model(self) -> Any:  # noqa: ANN401
         """Provide a compatibility view matching wrapped deepmd-kit models."""
         return self
 
