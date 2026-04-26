@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import deepmd.pt.model  # noqa: F401
 import pytest
@@ -17,11 +17,9 @@ from deepmd_gnn.mace_off import (
     _load_mace_checkpoint,
     convert_mace_off_to_deepmd,
     download_mace_off_model,
+    get_mace_off_cache_dir,
     load_mace_off_model,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _native_mace_reference_outputs(
@@ -186,6 +184,61 @@ def test_mace_off_model_urls_are_raw_github_paths() -> None:
     assert MACE_OFF_MODELS["off24_medium"].endswith(
         "mace_off24/MACE-OFF24_medium.model",
     )
+
+
+def test_get_mace_off_cache_dir_uses_xdg_cache_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Cache directory should honor XDG_CACHE_HOME when it is set."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    cache_dir = get_mace_off_cache_dir()
+    assert cache_dir == tmp_path / "deepmd-gnn" / "mace-off"
+    assert cache_dir.exists()
+
+
+def test_download_mace_off_model_rejects_unknown_name(tmp_path: Path) -> None:
+    """Unknown checkpoint names should fail clearly."""
+    with pytest.raises(ValueError, match="Unknown MACE-OFF model"):
+        download_mace_off_model("not-a-model", cache_dir=tmp_path)
+
+
+def test_download_mace_off_model_uses_alias_and_cached_file(tmp_path: Path) -> None:
+    """Compatibility aliases should resolve to the canonical cached filename."""
+    cached_file = tmp_path / "MACE-OFF23_small.model"
+    cached_file.write_bytes(b"cached")
+    model_path = download_mace_off_model("small", cache_dir=tmp_path)
+    assert model_path == cached_file
+
+
+def test_download_mace_off_model_force_download_calls_urlretrieve(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Forced downloads should refresh the cached file from the official URL."""
+    recorded: dict[str, str] = {}
+
+    def fake_urlretrieve(url: str, filename: Path) -> None:
+        recorded["url"] = url
+        recorded["filename"] = str(filename)
+        Path(filename).write_bytes(b"downloaded")
+
+    monkeypatch.setattr("deepmd_gnn.mace_off.urlretrieve", fake_urlretrieve)
+    model_path = download_mace_off_model(
+        "off23_small",
+        cache_dir=tmp_path,
+        force_download=True,
+    )
+    assert model_path.exists()
+    assert model_path.read_bytes() == b"downloaded"
+    assert recorded["url"] == MACE_OFF_MODELS["off23_small"]
+    assert recorded["filename"] == str(model_path)
+
+
+def test_load_mace_off_model_rejects_non_positive_sel() -> None:
+    """Sel is a required positive runtime neighbor cap."""
+    with pytest.raises(ValueError, match="sel must be positive"):
+        load_mace_off_model(model_name=None, model_path="dummy.model", sel=0)
 
 
 @pytest.mark.slow

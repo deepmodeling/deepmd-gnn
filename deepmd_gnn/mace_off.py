@@ -261,7 +261,7 @@ def _infer_mlp_irreps(mace_model: ScaleShiftMACE) -> str:
 
 def _infer_scale(mace_model: ScaleShiftMACE) -> float:
     scale_state = mace_model.scale_shift.state_dict()
-    return float(scale_state["scale"])
+    return float(scale_state["scale"].detach().cpu().item())
 
 
 def _infer_avg_num_neighbors(mace_model: ScaleShiftMACE) -> float:
@@ -315,6 +315,16 @@ def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> _InferredMaceConfig:
 
 
 def _load_mace_checkpoint(model_path: Path, device: str) -> ScaleShiftMACE:
+    """Load a trusted local MACE checkpoint object.
+
+    Notes
+    -----
+    This function uses ``torch.load(..., weights_only=False)`` because the
+    conservative loader needs access to the original ``ScaleShiftMACE`` object,
+    not just a plain state dict. That implies normal Python unpickling semantics:
+    callers should only use trusted checkpoint files, whether downloaded from the
+    official ``MACE_OFF_MODELS`` URLs or supplied via a trusted local path.
+    """
     model = torch.load(str(model_path), map_location=device, weights_only=False)
     if not isinstance(model, ScaleShiftMACE):
         msg = (
