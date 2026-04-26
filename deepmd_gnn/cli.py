@@ -92,7 +92,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _parser_error(parser: argparse.ArgumentParser, message: str) -> NoReturn:
     parser.error(message)
-    raise AssertionError("unreachable")
+    msg = "unreachable"
+    raise AssertionError(msg)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

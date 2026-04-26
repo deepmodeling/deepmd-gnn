@@ -268,7 +268,8 @@ def test_download_mace_off_model_rejects_bad_download_digest(
         lambda _url, filename: Path(filename).write_bytes(b"bad"),
     )
     monkeypatch.setattr(
-        "deepmd_gnn.mace_off_cli._sha256sum", lambda _path: "bad-digest"
+        "deepmd_gnn.mace_off_cli._sha256sum",
+        lambda _path: "bad-digest",
     )
 
     with pytest.raises(ValueError, match="SHA256 mismatch"):
