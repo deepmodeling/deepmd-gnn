@@ -12,14 +12,16 @@ from deepmd.pt.utils.nlist import extend_input_and_build_neighbor_list
 
 from deepmd_gnn.mace import MaceModel
 from deepmd_gnn.mace_off import (
-    MACE_OFF_MODELS,
-    MACE_OFF_MODEL_SHA256,
     _infer_deepmd_config,
     _load_mace_checkpoint,
     convert_mace_off_to_deepmd,
     download_mace_off_model,
-    get_mace_off_cache_dir,
     load_mace_off_model,
+)
+from deepmd_gnn.mace_off_cli import (
+    MACE_OFF_MODELS,
+    MACE_OFF_MODEL_SHA256,
+    get_mace_off_cache_dir,
 )
 
 
@@ -216,7 +218,7 @@ def test_download_mace_off_model_uses_alias_and_cached_file(tmp_path: Path) -> N
     cached_file.write_bytes(b"cached")
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
-            "deepmd_gnn.mace_off._validate_model_file",
+            "deepmd_gnn.mace_off_cli._validate_model_file",
             lambda *_args, **_kwargs: True,
         )
         model_path = download_mace_off_model("small", cache_dir=tmp_path)
@@ -237,9 +239,9 @@ def test_download_mace_off_model_redownloads_on_sha256_mismatch(
         recorded["filename"] = str(filename)
         Path(filename).write_bytes(b"downloaded")
 
-    monkeypatch.setattr("deepmd_gnn.mace_off.urlretrieve", fake_urlretrieve)
+    monkeypatch.setattr("deepmd_gnn.mace_off_cli.urlretrieve", fake_urlretrieve)
     monkeypatch.setattr(
-        "deepmd_gnn.mace_off._sha256sum",
+        "deepmd_gnn.mace_off_cli._sha256sum",
         lambda path: (
             "different"
             if Path(path) == cached_file
@@ -262,10 +264,10 @@ def test_download_mace_off_model_rejects_bad_download_digest(
 ) -> None:
     """Downloads should fail if the fetched file does not match the expected SHA256."""
     monkeypatch.setattr(
-        "deepmd_gnn.mace_off.urlretrieve",
+        "deepmd_gnn.mace_off_cli.urlretrieve",
         lambda _url, filename: Path(filename).write_bytes(b"bad"),
     )
-    monkeypatch.setattr("deepmd_gnn.mace_off._sha256sum", lambda _path: "bad-digest")
+    monkeypatch.setattr("deepmd_gnn.mace_off_cli._sha256sum", lambda _path: "bad-digest")
 
     with pytest.raises(ValueError, match="SHA256 mismatch"):
         download_mace_off_model("off23_small", cache_dir=tmp_path)

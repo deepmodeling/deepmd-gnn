@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from deepmd_gnn.mace_off import (
+from deepmd_gnn.mace_off_cli import (
     MACE_OFF_MODEL_CHOICES,
-    convert_mace_off_to_deepmd,
     download_mace_off_model,
     get_mace_off_cache_dir,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -93,6 +96,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "mace-off":
         if args.mace_off_command == "convert":
+            from deepmd_gnn.mace_off import convert_mace_off_to_deepmd
+
             output_path = convert_mace_off_to_deepmd(
                 output_file=args.output_file,
                 sel=args.sel,
@@ -100,18 +105,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 model_path=args.model_path,
                 cache_dir=args.cache_dir,
             )
-            print(output_path)
+            sys.stdout.write(f"{output_path}\n")
             return 0
         if args.mace_off_command == "download":
             model_path = download_mace_off_model(
                 model_name=args.model,
                 cache_dir=args.cache_dir,
             )
-            print(model_path)
+            sys.stdout.write(f"{model_path}\n")
             return 0
         if args.mace_off_command == "cache-dir":
-            print(get_mace_off_cache_dir())
+            sys.stdout.write(f"{get_mace_off_cache_dir()}\n")
             return 0
 
     parser.error("Unhandled command")
-    return 2

@@ -89,7 +89,9 @@ def test_cli_convert_invokes_helper(
         recorded["device"] = device
         return Path(output_file)
 
-    monkeypatch.setattr(cli, "convert_mace_off_to_deepmd", fake_convert)
+    import deepmd_gnn.mace_off as mace_off
+
+    monkeypatch.setattr(mace_off, "convert_mace_off_to_deepmd", fake_convert)
 
     exit_code = cli.main(
         [
