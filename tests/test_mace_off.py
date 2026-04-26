@@ -238,7 +238,7 @@ def test_download_mace_off_model_force_download_calls_urlretrieve(
 def test_load_mace_off_model_rejects_non_positive_sel() -> None:
     """Sel is a required positive runtime neighbor cap."""
     with pytest.raises(ValueError, match="sel must be positive"):
-        load_mace_off_model(model_name=None, model_path="dummy.model", sel=0)
+        load_mace_off_model(model_name=None, model_path=Path("dummy.model"), sel=0)
 
 
 @pytest.mark.slow
