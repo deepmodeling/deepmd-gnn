@@ -190,17 +190,27 @@ Such GNN+DPRc model can be directly used in AmberTools24.
 
 ## Conservative MACE-OFF checkpoint loading
 
-`deepmd_gnn.mace_off` provides a conservative loader for selected official
-MACE-OFF checkpoints. It is intentionally narrower than DPRc/QM/MM support:
+`deepmd_gnn.mace_off` provides a conservative bridge from selected official
+MACE-OFF checkpoints into DeePMD-GNN. The goal is to recover the parts that are
+really stored in the checkpoint while avoiding guesses about wrapper-only
+runtime semantics.
 
-- it only infers ordinary element `type_map` entries from checkpoint
+In practice, this path intentionally does less inference than the broader
+DPRc/QM/MM machinery:
+
+- it infers ordinary element `type_map` entries from checkpoint
   `atomic_numbers`
+- it restores checkpoint-side model semantics such as `avg_num_neighbors` from
+  the original `ScaleShiftMACE` object instead of reusing DeePMD's runtime
+  neighbor cap
+- it requires an explicit `sel` value, because `sel` is a DeePMD runtime
+  neighbor-list cap and is not stored in the MACE-OFF checkpoint
 - it does **not** infer DPRc/MM labels such as `mH`, `mC`, `HW`, or `OW`
-- it requires an explicit `sel` value, because DeePMD's runtime neighbor-list
-  cap is not stored in the MACE-OFF checkpoint and guessing it can silently
-  truncate neighbors
-- scripting the wrapped model is only a DeePMD-GNN serialization step; callers
-  should still validate any downstream deployment path they care about
+- `load_mace_off_model()` keeps the original eager MACE checkpoint model inside
+  the wrapper for closer native/wrapper parity, while
+  `convert_mace_off_to_deepmd()` scripts the model only at export time
+- it uses `torch.load(..., weights_only=False)` to recover the original
+  `ScaleShiftMACE` object, so callers should only use trusted checkpoints
 
 Example:
 
@@ -213,6 +223,10 @@ convert_mace_off_to_deepmd(
     sel=64,
 )
 ```
+
+This produces a scripted DeePMD-GNN wrapper. That serialization step is useful,
+but it is still a good idea to validate the final downstream workflow you care
+about (for example in LAMMPS or AMBER).
 
 ## Examples
 
