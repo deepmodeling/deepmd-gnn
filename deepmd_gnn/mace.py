@@ -722,8 +722,9 @@ class MaceModel(BaseModel):
 
         # cast to float32
         default_dtype = self.model.atomic_energies_fn.atomic_energies.dtype
-        extended_coord_ff = extended_coord_ff.to(default_dtype)
-        extended_coord_ff.requires_grad_(True)  # noqa: FBT003
+        extended_coord_grad = extended_coord.to(default_dtype)
+        extended_coord_grad.requires_grad_(True)  # noqa: FBT003
+        extended_coord_ff = extended_coord_grad.view(nf * nall, 3)
         nedge = edge_index.shape[1]
         if self.num_interactions > 1 and mapping is not None and nloc < nall:
             # shift the edges for ghost atoms, and map the ghost atoms to real atoms
@@ -817,7 +818,7 @@ class MaceModel(BaseModel):
             model_ret = fit_output_to_model_output(
                 {"energy": atom_energy.view(nf, nloc, 1)},
                 self.fitting_output_def(),
-                extended_coord_ff.view(nf, nall, 3),
+                extended_coord_grad,
                 do_atomic_virial=True,
                 create_graph=self.training,
             )
