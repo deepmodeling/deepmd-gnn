@@ -17,6 +17,7 @@ from deepmd.pt.model.model.model import (
 )
 from deepmd.pt.model.model.transform_output import (
     communicate_extended_output,
+    fit_output_to_model_output,
 )
 from deepmd.pt.utils import env
 from deepmd.pt.utils.nlist import (
@@ -659,7 +660,7 @@ class MaceModel(BaseModel):
         mapping: Optional[torch.Tensor] = None,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
-        do_atomic_virial: bool = False,  # noqa: ARG002
+        do_atomic_virial: bool = False,
         comm_dict: Optional[dict[str, torch.Tensor]] = None,
     ) -> dict[str, torch.Tensor]:
         """Forward lower common pass of the model.
@@ -721,8 +722,9 @@ class MaceModel(BaseModel):
 
         # cast to float32
         default_dtype = self.model.atomic_energies_fn.atomic_energies.dtype
-        extended_coord_ff = extended_coord_ff.to(default_dtype)
-        extended_coord_ff.requires_grad_(True)  # noqa: FBT003
+        extended_coord_grad = extended_coord.to(default_dtype)
+        extended_coord_grad.requires_grad_(True)  # noqa: FBT003
+        extended_coord_ff = extended_coord_grad.view(nf * nall, 3)
         nedge = edge_index.shape[1]
         if self.num_interactions > 1 and mapping is not None and nloc < nall:
             # shift the edges for ghost atoms, and map the ghost atoms to real atoms
@@ -812,6 +814,15 @@ class MaceModel(BaseModel):
         force = force.view(nf, nall, 3).to(extended_coord_.dtype)
         atomic_virial = atomic_virial.view(nf, nall, 1, 9)
         virial = torch.sum(atomic_virial, dim=1).view(nf, 9).to(extended_coord_.dtype)
+        if do_atomic_virial:
+            model_ret = fit_output_to_model_output(
+                {"energy": atom_energy.view(nf, nloc, 1)},
+                self.fitting_output_def(),
+                extended_coord_grad,
+                do_atomic_virial=True,
+                create_graph=self.training,
+            )
+            atomic_virial = model_ret["energy_derv_c"].to(extended_coord_.dtype)
 
         return {
             "energy_redu": energy.view(nf, 1),
@@ -819,7 +830,8 @@ class MaceModel(BaseModel):
             "energy_derv_c_redu": virial.view(nf, 1, 9),
             # take the first nloc atoms to match other models
             "energy": atom_energy.view(nf, nloc, 1),
-            # fake atom_virial
+            # fake atom_virial when do_atomic_virial is False;
+            # corrected one when do_atomic_virial is True.
             "energy_derv_c": atomic_virial.view(nf, nall, 1, 9),
         }
 
