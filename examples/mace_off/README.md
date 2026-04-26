@@ -26,14 +26,8 @@ Current scope and assumptions:
 
 Example:
 
-```python
-from deepmd_gnn.mace_off import convert_mace_off_to_deepmd
-
-convert_mace_off_to_deepmd(
-    output_file="mace_off23_small_dp.pt",
-    model_name="off23_small",
-    sel=64,
-)
+```sh
+deepmd-gnn mace-off convert mace_off23_small_dp.pt --model off23_small --sel 64
 ```
 
 This produces a scripted DeePMD-GNN wrapper for downstream use. It is still a
