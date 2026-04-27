@@ -996,15 +996,12 @@ class ModelTestCase:
                 decimal=places,
             )
             if "atom_virial" in self.output_def:
-                fdav = (
-                    -(
-                        finite_difference(ff_cell_atom, cell, delta=delta)
-                        .reshape(-1, 3, 3)
-                        .transpose(0, 2, 1)
-                        @ cell.reshape(-1, 3, 3)
-                    )
-                    .reshape(-1, 9)
-                )
+                fdav = -(
+                    finite_difference(ff_cell_atom, cell, delta=delta)
+                    .reshape(-1, 3, 3)
+                    .transpose(0, 2, 1)
+                    @ cell.reshape(-1, 3, 3)
+                ).reshape(-1, 9)
                 np.testing.assert_almost_equal(
                     fdav,
                     ret["atom_virial"].reshape(-1, 9),
