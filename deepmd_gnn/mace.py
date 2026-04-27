@@ -16,8 +16,8 @@ from deepmd.pt.model.model.model import (
     BaseModel,
 )
 from deepmd.pt.model.model.transform_output import (
+    atomic_virial_corr,
     communicate_extended_output,
-    fit_output_to_model_output,
 )
 from deepmd.pt.utils import env
 from deepmd.pt.utils.nlist import (
@@ -813,16 +813,12 @@ class MaceModel(BaseModel):
         )
         force = force.view(nf, nall, 3).to(extended_coord_.dtype)
         atomic_virial = atomic_virial.view(nf, nall, 1, 9)
-        virial = torch.sum(atomic_virial, dim=1).view(nf, 9).to(extended_coord_.dtype)
         if do_atomic_virial:
-            model_ret = fit_output_to_model_output(
-                {"energy": atom_energy.view(nf, nloc, 1)},
-                self.fitting_output_def(),
+            atomic_virial = atomic_virial + atomic_virial_corr(
                 extended_coord_grad,
-                do_atomic_virial=True,
-                create_graph=self.training,
-            )
-            atomic_virial = model_ret["energy_derv_c"].to(extended_coord_.dtype)
+                atom_energy.view(nf, nloc, 1),
+            ).view(nf, nall, 1, 9).to(extended_coord_.dtype)
+        virial = torch.sum(atomic_virial, dim=1).view(nf, 9).to(extended_coord_.dtype)
 
         return {
             "energy_redu": energy.view(nf, 1),

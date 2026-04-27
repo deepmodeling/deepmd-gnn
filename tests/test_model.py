@@ -976,12 +976,21 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
-            rfv = module(**input_dict)["virial"]
+            if "atom_virial" in self.output_def:
+                input_dict["do_atomic_virial"] = True
+            ret = module(**input_dict)
+            rfv = ret["virial"]
             np.testing.assert_almost_equal(
                 fdv.reshape(-1, 9),
                 rfv.reshape(-1, 9),
                 decimal=places,
             )
+            if "atom_virial" in self.output_def:
+                np.testing.assert_almost_equal(
+                    ret["atom_virial"].sum(axis=1).reshape(-1, 9),
+                    rfv.reshape(-1, 9),
+                    decimal=places,
+                )
         else:
             # not support virial by far
             pass
