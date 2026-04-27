@@ -959,6 +959,16 @@ class ModelTestCase:
                 }
                 return module(**input_dict)["energy"]
 
+            def ff_cell_atom(bb):
+                input_dict = {
+                    "coord": stretch_box(coord, cell, bb),
+                    "atype": atype,
+                    "box": bb,
+                    "aparam": aparam,
+                    "fparam": fparam,
+                }
+                return module(**input_dict)["atom_energy"]
+
             fdv = (
                 -(
                     finite_difference(ff_cell, cell, delta=delta)
@@ -986,6 +996,20 @@ class ModelTestCase:
                 decimal=places,
             )
             if "atom_virial" in self.output_def:
+                fdav = (
+                    -(
+                        finite_difference(ff_cell_atom, cell, delta=delta)
+                        .reshape(-1, 3, 3)
+                        .transpose(0, 2, 1)
+                        @ cell.reshape(-1, 3, 3)
+                    )
+                    .reshape(-1, 9)
+                )
+                np.testing.assert_almost_equal(
+                    fdav,
+                    ret["atom_virial"].reshape(-1, 9),
+                    decimal=places,
+                )
                 np.testing.assert_almost_equal(
                     ret["atom_virial"].sum(axis=1).reshape(-1, 9),
                     rfv.reshape(-1, 9),
