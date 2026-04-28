@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import urllib.error
 
 import deepmd.pt.model  # noqa: F401
 import pytest
@@ -21,6 +22,7 @@ from deepmd_gnn.mace_off import (
 from deepmd_gnn.mace_off_cli import (
     MACE_OFF_MODEL_SHA256,
     MACE_OFF_MODELS,
+    MACE_OFF_MODEL_URLS,
     get_mace_off_cache_dir,
 )
 
@@ -178,7 +180,7 @@ def _native_mace_reference_outputs(
 
 
 def test_mace_off_model_urls_are_raw_github_paths() -> None:
-    """Model URLs should point to the real raw GitHub checkpoint paths."""
+    """Canonical model URLs should point to the real raw GitHub checkpoint paths."""
     assert MACE_OFF_MODELS["off23_small"].endswith("mace_off23/MACE-OFF23_small.model")
     assert MACE_OFF_MODELS["off23_medium"].endswith(
         "mace_off23/MACE-OFF23_medium.model",
@@ -187,6 +189,15 @@ def test_mace_off_model_urls_are_raw_github_paths() -> None:
     assert MACE_OFF_MODELS["off24_medium"].endswith(
         "mace_off24/MACE-OFF24_medium.model",
     )
+
+
+def test_mace_off_model_urls_include_ghfast_mirror() -> None:
+    """Each model should expose both canonical GitHub and ghfast mirror URLs."""
+    for model_name, canonical_url in MACE_OFF_MODELS.items():
+        assert MACE_OFF_MODEL_URLS[model_name] == [
+            canonical_url,
+            f"https://ghfast.top/{canonical_url}",
+        ]
 
 
 def test_mace_off_model_sha256_map_has_all_supported_models() -> None:
@@ -233,20 +244,24 @@ def test_download_mace_off_model_redownloads_on_sha256_mismatch(
     cached_file = tmp_path / "MACE-OFF23_small.model"
     cached_file.write_bytes(b"stale")
     recorded: dict[str, str] = {}
+    sha_calls = {"count": 0}
 
-    def fake_urlretrieve(url: str, filename: Path) -> None:
+    def fake_download_file(url: str, destination: Path) -> None:
         recorded["url"] = url
-        recorded["filename"] = str(filename)
-        Path(filename).write_bytes(b"downloaded")
+        recorded["destination"] = str(destination)
+        Path(destination).write_bytes(b"downloaded")
 
-    monkeypatch.setattr("deepmd_gnn.mace_off_cli.urlretrieve", fake_urlretrieve)
+    def fake_sha256sum(_path: Path) -> str:
+        sha_calls["count"] += 1
+        if sha_calls["count"] == 1:
+            return "different"
+        return MACE_OFF_MODEL_SHA256["off23_small"]
+
+    monkeypatch.setattr("deepmd_gnn.mace_off_cli._download_file", fake_download_file)
+    monkeypatch.setattr("deepmd_gnn.mace_off_cli._sha256sum", fake_sha256sum)
     monkeypatch.setattr(
-        "deepmd_gnn.mace_off_cli._sha256sum",
-        lambda path: (
-            "different"
-            if Path(path) == cached_file
-            else MACE_OFF_MODEL_SHA256["off23_small"]
-        ),
+        "deepmd_gnn.mace_off_cli._rank_download_urls",
+        lambda urls: urls,
     )
 
     model_path = download_mace_off_model("off23_small", cache_dir=tmp_path)
@@ -254,8 +269,7 @@ def test_download_mace_off_model_redownloads_on_sha256_mismatch(
     assert model_path.exists()
     assert model_path.read_bytes() == b"downloaded"
     assert recorded["url"] == MACE_OFF_MODELS["off23_small"]
-    assert Path(recorded["filename"]).parent == tmp_path
-    assert Path(recorded["filename"]).name != cached_file.name
+    assert Path(recorded["destination"]) == cached_file
 
 
 def test_download_mace_off_model_rejects_bad_download_digest(
@@ -264,16 +278,52 @@ def test_download_mace_off_model_rejects_bad_download_digest(
 ) -> None:
     """Downloads should fail if the fetched file does not match the expected SHA256."""
     monkeypatch.setattr(
-        "deepmd_gnn.mace_off_cli.urlretrieve",
-        lambda _url, filename: Path(filename).write_bytes(b"bad"),
+        "deepmd_gnn.mace_off_cli._download_file",
+        lambda _url, destination: Path(destination).write_bytes(b"bad"),
     )
     monkeypatch.setattr(
         "deepmd_gnn.mace_off_cli._sha256sum",
         lambda _path: "bad-digest",
     )
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off_cli._rank_download_urls",
+        lambda urls: urls[:1],
+    )
 
     with pytest.raises(ValueError, match="SHA256 mismatch"):
         download_mace_off_model("off23_small", cache_dir=tmp_path)
+
+
+def test_download_mace_off_model_falls_back_to_ghfast_mirror(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Mirror URLs should be attempted when the canonical GitHub source fails."""
+    attempts: list[str] = []
+
+    def fake_download_file(url: str, destination: Path) -> None:
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise urllib.error.URLError("primary unavailable")
+        Path(destination).write_bytes(b"downloaded")
+
+    monkeypatch.setattr("deepmd_gnn.mace_off_cli._download_file", fake_download_file)
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off_cli._sha256sum",
+        lambda _path: MACE_OFF_MODEL_SHA256["off23_small"],
+    )
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off_cli._rank_download_urls",
+        lambda urls: urls,
+    )
+
+    model_path = download_mace_off_model("off23_small", cache_dir=tmp_path)
+
+    assert model_path == tmp_path / "MACE-OFF23_small.model"
+    assert attempts == [
+        MACE_OFF_MODELS["off23_small"],
+        MACE_OFF_MODEL_URLS["off23_small"][1],
+    ]
 
 
 def test_load_mace_off_model_rejects_non_positive_sel() -> None:
