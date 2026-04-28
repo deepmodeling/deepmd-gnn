@@ -61,6 +61,11 @@ def _native_mace_reference_outputs(
         torch.tensor([], dtype=torch.int64, device="cpu"),
     ).T
 
+    shifts = torch.zeros(
+        (edge_index.shape[1], 3),
+        dtype=default_dtype,
+        device=extended_coord_ff.device,
+    )
     if mapping is not None and nloc < nall:
         mapping_ff = mapping.view(nf * nall) + torch.arange(
             0,
@@ -72,12 +77,6 @@ def _native_mace_reference_outputs(
         shifts_atoms = extended_coord_ff - extended_coord_ff[mapping_ff]
         shifts = shifts_atoms[edge_index[1]] - shifts_atoms[edge_index[0]]
         edge_index = mapping_ff[edge_index]
-    else:
-        shifts = torch.zeros(
-            (edge_index.shape[1], 3),
-            dtype=default_dtype,
-            device=extended_coord_ff.device,
-        )
 
     one_hot = torch.zeros(
         (nf * nall, ntypes),
@@ -90,33 +89,57 @@ def _native_mace_reference_outputs(
         value=1,
     )
 
+    batch = torch.arange(
+        nf,
+        dtype=torch.int64,
+        device=extended_coord_ff.device,
+    ).unsqueeze(-1).expand(nf, nall).reshape(-1)
+    ptr = torch.arange(
+        0,
+        (nf + 1) * nall,
+        nall,
+        dtype=torch.int64,
+        device=extended_coord_ff.device,
+    )
+    weight = torch.ones(
+        [nf],
+        dtype=default_dtype,
+        device=extended_coord_ff.device,
+    )
+    cell = box.view(nf, 3, 3).to(default_dtype).to(extended_coord_ff.device)
+    edge_batch = torch.div(edge_index[0], nall, rounding_mode="floor")
+    inv_box = torch.linalg.inv(cell)
+    unit_shifts = torch.einsum("ec,ecb->eb", shifts, inv_box[edge_batch])
+    displacement = torch.zeros(
+        (nf, 3, 3),
+        dtype=extended_coord_ff.dtype,
+        device=extended_coord_ff.device,
+    )
+    displacement.requires_grad_(True)
+    symmetric_displacement = 0.5 * (
+        displacement + displacement.transpose(-1, -2)
+    )
+    positions = extended_coord_ff + torch.einsum(
+        "be,bec->bc",
+        extended_coord_ff,
+        symmetric_displacement[batch],
+    )
+    cell_def = cell + torch.matmul(cell, symmetric_displacement)
+
     ret = mace_model.forward(
         {
-            "positions": extended_coord_ff,
-            "shifts": shifts,
-            "cell": torch.eye(
-                3,
-                dtype=default_dtype,
-                device=extended_coord_ff.device,
-            )
-            * 1000.0,
+            "positions": positions,
+            "cell": cell_def,
+            "shifts": torch.einsum(
+                "be,bec->bc",
+                torch.round(unit_shifts).to(default_dtype),
+                cell_def[edge_batch],
+            ),
             "edge_index": edge_index,
-            "batch": torch.zeros(
-                [nf * nall],
-                dtype=torch.int64,
-                device=extended_coord_ff.device,
-            ),
+            "batch": batch,
             "node_attrs": one_hot,
-            "ptr": torch.tensor(
-                [0, nf * nall],
-                dtype=torch.int64,
-                device=extended_coord_ff.device,
-            ),
-            "weight": torch.tensor(
-                [1.0],
-                dtype=default_dtype,
-                device=extended_coord_ff.device,
-            ),
+            "ptr": ptr,
+            "weight": weight,
         },
         compute_force=False,
         compute_virials=False,
@@ -130,24 +153,26 @@ def _native_mace_reference_outputs(
         msg = "Native MACE model returned no node_energy"
         raise ValueError(msg)
     atom_energy = atom_energy.view(nf, nall)[:, :nloc]
-    energy = atom_energy.sum(dim=1).view(nf, 1)
+    energy = atom_energy.sum(dim=1).view(nf)
 
-    force = torch.autograd.grad(
+    grads = torch.autograd.grad(
         outputs=[energy],
-        inputs=[extended_coord_ff],
+        inputs=[extended_coord_ff, displacement],
         grad_outputs=[torch.ones_like(energy)],
-        retain_graph=True,
+        retain_graph=False,
         create_graph=False,
-    )[0]
+        allow_unused=True,
+    )
+    force = grads[0]
+    virial = grads[1]
     if force is None:
         msg = "Native MACE model returned no force gradient"
         raise ValueError(msg)
     force = -force.view(nf, nall, 3)
-    atomic_virial = force.to(coord.dtype).unsqueeze(-1) @ extended_coord_ff.view(
-        nf,
-        nall,
-        3,
-    ).to(coord.dtype).unsqueeze(-2)
+    if virial is None:
+        virial_out = torch.zeros((nf, 9), dtype=coord.dtype, device=force.device)
+    else:
+        virial_out = (-virial).view(nf, 9).to(coord.dtype)
 
     if mapping is not None:
         force_local = torch.scatter_reduce(
@@ -157,21 +182,12 @@ def _native_mace_reference_outputs(
             force.to(coord.dtype),
             reduce="sum",
         )
-        atomic_virial_local = torch.scatter_reduce(
-            torch.zeros((nf, nloc, 9), dtype=coord.dtype, device=force.device),
-            1,
-            mapping.unsqueeze(-1).expand(nf, nall, 9),
-            atomic_virial.view(nf, nall, 9),
-            reduce="sum",
-        )
         force_out = force_local
-        virial_out = atomic_virial_local.sum(dim=1).view(nf, 9)
     else:
         force_out = force[:, :nloc, :].to(coord.dtype)
-        virial_out = atomic_virial.sum(dim=1).view(nf, 9)
 
     return {
-        "energy": energy.to(coord.dtype),
+        "energy": energy.view(nf, 1).to(coord.dtype),
         "force": force_out,
         "virial": virial_out,
     }
