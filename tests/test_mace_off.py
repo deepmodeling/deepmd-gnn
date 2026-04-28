@@ -89,11 +89,16 @@ def _native_mace_reference_outputs(
         value=1,
     )
 
-    batch = torch.arange(
-        nf,
-        dtype=torch.int64,
-        device=extended_coord_ff.device,
-    ).unsqueeze(-1).expand(nf, nall).reshape(-1)
+    batch = (
+        torch.arange(
+            nf,
+            dtype=torch.int64,
+            device=extended_coord_ff.device,
+        )
+        .unsqueeze(-1)
+        .expand(nf, nall)
+        .reshape(-1)
+    )
     ptr = torch.arange(
         0,
         (nf + 1) * nall,
@@ -116,9 +121,7 @@ def _native_mace_reference_outputs(
         device=extended_coord_ff.device,
     )
     displacement.requires_grad_(True)
-    symmetric_displacement = 0.5 * (
-        displacement + displacement.transpose(-1, -2)
-    )
+    symmetric_displacement = 0.5 * (displacement + displacement.transpose(-1, -2))
     positions = extended_coord_ff + torch.einsum(
         "be,bec->bc",
         extended_coord_ff,

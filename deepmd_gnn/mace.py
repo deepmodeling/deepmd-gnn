@@ -17,7 +17,6 @@ from deepmd.pt.model.model.model import (
 )
 from deepmd.pt.model.model.transform_output import (
     communicate_extended_output,
-    fit_output_to_model_output,
 )
 from deepmd.pt.utils import env
 from deepmd.pt.utils.nlist import (
@@ -576,7 +575,8 @@ class MaceModel(BaseModel):
         model_predict["virial"] = model_ret_lower["energy_derv_c_redu"].squeeze(-2)
         if do_atomic_virial:
             model_predict["atom_virial"] = model_ret_lower["energy_derv_c"][
-                :, :nloc
+                :,
+                :nloc,
             ].squeeze(-3)
         return model_predict
 
@@ -746,11 +746,16 @@ class MaceModel(BaseModel):
         shifts = shifts.to(default_dtype)
         one_hot = one_hot.to(default_dtype)
 
-        batch = torch.arange(
-            nf,
-            dtype=torch.int64,
-            device=extended_coord_ff.device,
-        ).unsqueeze(-1).expand(nf, nall).reshape(-1)
+        batch = (
+            torch.arange(
+                nf,
+                dtype=torch.int64,
+                device=extended_coord_ff.device,
+            )
+            .unsqueeze(-1)
+            .expand(nf, nall)
+            .reshape(-1)
+        )
         ptr = torch.arange(
             0,
             (nf + 1) * nall,
@@ -774,7 +779,9 @@ class MaceModel(BaseModel):
         }
         displacement = torch.jit.annotate(Optional[torch.Tensor], None)
         if box is not None:
-            box_tensor = box.view(nf, 3, 3).to(default_dtype).to(extended_coord_ff.device)
+            box_tensor = (
+                box.view(nf, 3, 3).to(default_dtype).to(extended_coord_ff.device)
+            )
             edge_batch = torch.div(edge_index[0], nall, rounding_mode="floor")
             inv_box = torch.linalg.inv(box_tensor)
             unit_shifts = torch.einsum("ec,ecb->eb", shifts, inv_box[edge_batch])
