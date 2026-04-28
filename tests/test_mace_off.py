@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import urllib.error
+from pathlib import Path
 
 import deepmd.pt.model  # noqa: F401
 import pytest
@@ -21,8 +21,8 @@ from deepmd_gnn.mace_off import (
 )
 from deepmd_gnn.mace_off_cli import (
     MACE_OFF_MODEL_SHA256,
-    MACE_OFF_MODELS,
     MACE_OFF_MODEL_URLS,
+    MACE_OFF_MODELS,
     get_mace_off_cache_dir,
 )
 
