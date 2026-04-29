@@ -8,6 +8,7 @@ import hashlib
 import logging
 import os
 import shutil
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -62,7 +63,8 @@ def _validate_download_url(url: str) -> None:
     """Validate that download URL uses HTTPS scheme."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https":
-        raise ValueError(f"Unsupported URL scheme for download: {parsed.scheme}")
+        msg = f"Unsupported URL scheme for download: {parsed.scheme}"
+        raise ValueError(msg)
 
 
 def _model_download_urls(model_name: str) -> list[str]:
@@ -92,14 +94,17 @@ def _validate_model_file(model_path: Path, expected_sha256: str) -> bool:
 def _probe_download_url(url: str) -> float | None:
     """Probe one URL and return latency seconds if reachable; else None."""
     _validate_download_url(url)
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # noqa: S310
         url,
         headers={"Range": "bytes=0-0"},
         method="GET",
     )
     start = time.monotonic()
     try:
-        with urllib.request.urlopen(request, timeout=SOURCE_PROBE_TIMEOUT_SECONDS):
+        with urllib.request.urlopen(  # noqa: S310
+            request,
+            timeout=SOURCE_PROBE_TIMEOUT_SECONDS,
+        ):
             pass
     except (urllib.error.URLError, OSError, ValueError):
         return None
@@ -130,16 +135,25 @@ def _download_file(url: str, destination: Path) -> None:
     """Download URL content to destination atomically."""
     _validate_download_url(url)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = destination.with_suffix(destination.suffix + ".part")
+    tmp_path: Path | None = None
 
     try:
-        with (
-            urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response,
-            tmp_path.open("wb") as out_file,
-        ):
-            shutil.copyfileobj(response, out_file)
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".part",
+            delete=False,
+        ) as out_file:
+            tmp_path = Path(out_file.name)
+            with urllib.request.urlopen(  # noqa: S310
+                url,
+                timeout=DOWNLOAD_TIMEOUT_SECONDS,
+            ) as response:
+                shutil.copyfileobj(response, out_file)
     except Exception:
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         raise
 
     tmp_path.replace(destination)
@@ -242,9 +256,8 @@ def download_mace_off_model(
 
     if isinstance(last_error, ValueError):
         raise last_error
-    raise RuntimeError(
-        f"Failed to download model '{canonical_name}' from all sources",
-    ) from last_error
+    msg = f"Failed to download model '{canonical_name}' from all sources"
+    raise RuntimeError(msg) from last_error
 
 
 __all__ = [

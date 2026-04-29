@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import tempfile
 import urllib.error
 from pathlib import Path
+from typing import Any
 
 import deepmd.pt.model  # noqa: F401
 import pytest
@@ -23,6 +25,7 @@ from deepmd_gnn.mace_off_cli import (
     MACE_OFF_MODEL_SHA256,
     MACE_OFF_MODEL_URLS,
     MACE_OFF_MODELS,
+    _download_file,
     get_mace_off_cache_dir,
 )
 
@@ -304,7 +307,8 @@ def test_download_mace_off_model_falls_back_to_ghfast_mirror(
     def fake_download_file(url: str, destination: Path) -> None:
         attempts.append(url)
         if len(attempts) == 1:
-            raise urllib.error.URLError("primary unavailable")
+            msg = "primary unavailable"
+            raise urllib.error.URLError(msg)
         Path(destination).write_bytes(b"downloaded")
 
     monkeypatch.setattr("deepmd_gnn.mace_off_cli._download_file", fake_download_file)
@@ -324,6 +328,53 @@ def test_download_mace_off_model_falls_back_to_ghfast_mirror(
         MACE_OFF_MODELS["off23_small"],
         MACE_OFF_MODEL_URLS["off23_small"][1],
     ]
+
+
+def test_download_file_uses_unique_temp_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Concurrent downloads to one cache path should not share a temp filename."""
+    destination = tmp_path / "MACE-OFF23_small.model"
+    temp_paths: list[Path] = []
+
+    class FakeResponse:
+        def __enter__(self) -> object:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _size: int = -1) -> bytes:
+            return b""
+
+    real_named_temporary_file = tempfile.NamedTemporaryFile
+
+    def fake_named_temporary_file(*args: Any, **kwargs: Any) -> Any:
+        tmp_file = real_named_temporary_file(*args, **kwargs)
+        temp_paths.append(Path(tmp_file.name))
+        return tmp_file
+
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off_cli.shutil.copyfileobj",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off_cli.tempfile.NamedTemporaryFile",
+        fake_named_temporary_file,
+    )
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off_cli.urllib.request.urlopen",
+        lambda *_args, **_kwargs: FakeResponse(),
+    )
+
+    _download_file(MACE_OFF_MODELS["off23_small"], destination)
+    _download_file(MACE_OFF_MODELS["off23_small"], destination)
+
+    assert len(temp_paths) == 2
+    assert temp_paths[0] != temp_paths[1]
+    assert all(path.parent == tmp_path for path in temp_paths)
+    assert all(not path.exists() for path in temp_paths)
 
 
 def test_load_mace_off_model_rejects_non_positive_sel() -> None:
