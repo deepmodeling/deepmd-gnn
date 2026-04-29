@@ -3,22 +3,38 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import logging
 import os
+import shutil
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from urllib.request import urlretrieve
 
 logger = logging.getLogger(__name__)
 
+DOWNLOAD_TIMEOUT_SECONDS = 120
+SOURCE_PROBE_TIMEOUT_SECONDS = 8
 _MACE_OFF_BASE_URL = "https://raw.githubusercontent.com/ACEsuit/mace-off/v0.2"
+_GHFAST_PREFIX = "https://ghfast.top/"
 
 MACE_OFF_MODELS = {
     "off23_small": f"{_MACE_OFF_BASE_URL}/mace_off23/MACE-OFF23_small.model",
     "off23_medium": f"{_MACE_OFF_BASE_URL}/mace_off23/MACE-OFF23_medium.model",
     "off23_large": f"{_MACE_OFF_BASE_URL}/mace_off23/MACE-OFF23_large.model",
     "off24_medium": f"{_MACE_OFF_BASE_URL}/mace_off24/MACE-OFF24_medium.model",
+}
+
+MACE_OFF_MODEL_URLS = {
+    model_name: [
+        url,
+        f"{_GHFAST_PREFIX}{url}",
+    ]
+    for model_name, url in MACE_OFF_MODELS.items()
 }
 
 MACE_OFF_MODEL_SHA256 = {
@@ -43,6 +59,26 @@ def _canonical_model_name(model_name: str) -> str:
     return _MACE_OFF_MODEL_ALIASES.get(model_name, model_name)
 
 
+def _validate_download_url(url: str) -> None:
+    """Validate that download URL uses HTTPS scheme."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        msg = f"Unsupported URL scheme for download: {parsed.scheme}"
+        raise ValueError(msg)
+
+
+def _model_download_urls(model_name: str) -> list[str]:
+    """Return candidate download URLs for a canonical model name."""
+    urls = MACE_OFF_MODEL_URLS[model_name]
+    seen: set[str] = set()
+    unique_urls: list[str] = []
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            unique_urls.append(url)
+    return unique_urls
+
+
 def _sha256sum(path: Path) -> str:
     hasher = hashlib.sha256()
     with path.open("rb") as fh:
@@ -53,6 +89,74 @@ def _sha256sum(path: Path) -> str:
 
 def _validate_model_file(model_path: Path, expected_sha256: str) -> bool:
     return model_path.exists() and _sha256sum(model_path) == expected_sha256
+
+
+def _probe_download_url(url: str) -> float | None:
+    """Probe one URL and return latency seconds if reachable; else None."""
+    _validate_download_url(url)
+    request = urllib.request.Request(  # noqa: S310
+        url,
+        headers={"Range": "bytes=0-0"},
+        method="GET",
+    )
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(  # noqa: S310
+            request,
+            timeout=SOURCE_PROBE_TIMEOUT_SECONDS,
+        ):
+            pass
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+    return time.monotonic() - start
+
+
+def _rank_download_urls(urls: list[str]) -> list[str]:
+    """Rank candidate URLs by probe latency (fastest first)."""
+    if len(urls) <= 1:
+        return urls
+
+    results: dict[str, float] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(urls))) as exe:
+        future_to_url = {exe.submit(_probe_download_url, url): url for url in urls}
+        for future in concurrent.futures.as_completed(future_to_url):
+            url = future_to_url[future]
+            latency = future.result()
+            if latency is not None:
+                results[url] = latency
+
+    ranked_ok = sorted(results, key=lambda url: results[url])
+    ranked_fail = [url for url in urls if url not in results]
+    return ranked_ok + ranked_fail
+
+
+def _download_file(url: str, destination: Path) -> None:
+    """Download URL content to destination atomically."""
+    _validate_download_url(url)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".part",
+            delete=False,
+        ) as out_file:
+            tmp_path = Path(out_file.name)
+            with urllib.request.urlopen(  # noqa: S310
+                url,
+                timeout=DOWNLOAD_TIMEOUT_SECONDS,
+            ) as response:
+                shutil.copyfileobj(response, out_file)
+    except Exception:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise
+
+    tmp_path.replace(destination)
 
 
 def get_mace_off_cache_dir() -> Path:
@@ -93,9 +197,9 @@ def download_mace_off_model(
         cache_dir = Path(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-    url = MACE_OFF_MODELS[canonical_name]
+    urls = _model_download_urls(canonical_name)
     expected_sha256 = MACE_OFF_MODEL_SHA256[canonical_name]
-    filename = Path(url).name
+    filename = Path(MACE_OFF_MODELS[canonical_name]).name
     model_path = cache_dir / filename
 
     if _validate_model_file(model_path, expected_sha256):
@@ -108,34 +212,59 @@ def download_mace_off_model(
             model_path,
             canonical_name,
         )
+        model_path.unlink(missing_ok=True)
     else:
         logger.info("Downloading MACE-OFF model %s", canonical_name)
 
-    logger.info("URL: %s", url)
-    with NamedTemporaryFile(dir=cache_dir, delete=False) as tmp_file:
-        tmp_path = Path(tmp_file.name)
-    logger.info("Temporary download path: %s", tmp_path)
-    logger.info("Final destination after SHA256 validation: %s", model_path)
-    try:
-        urlretrieve(url, tmp_path)  # noqa: S310
-        actual_sha256 = _sha256sum(tmp_path)
+    ranked_urls = _rank_download_urls(urls)
+    if len(ranked_urls) > 1:
+        logger.info(
+            "Selecting fastest source among %d candidates...",
+            len(ranked_urls),
+        )
+
+    last_error: Exception | None = None
+    for idx, url in enumerate(ranked_urls, start=1):
+        logger.info(
+            "Downloading MACE-OFF model %s (source %d/%d): %s",
+            canonical_name,
+            idx,
+            len(ranked_urls),
+            url,
+        )
+        try:
+            _download_file(url, model_path)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            last_error = exc
+            logger.warning("Download attempt failed from %s: %s", url, exc)
+            continue
+
+        actual_sha256 = _sha256sum(model_path)
         if actual_sha256 != expected_sha256:
+            model_path.unlink(missing_ok=True)
             msg = (
                 f"SHA256 mismatch for downloaded model {canonical_name}: "
                 f"expected {expected_sha256}, got {actual_sha256}"
             )
-            raise ValueError(msg)
-        tmp_path.replace(model_path)
-    finally:
-        tmp_path.unlink(missing_ok=True)
+            last_error = ValueError(msg)
+            logger.warning("SHA256 verification failed from source: %s", url)
+            logger.warning("Expected: %s", expected_sha256)
+            logger.warning("Actual:   %s", actual_sha256)
+            continue
 
-    return model_path
+        return model_path
+
+    if isinstance(last_error, ValueError):
+        raise last_error
+    msg = f"Failed to download model '{canonical_name}' from all sources"
+    raise RuntimeError(msg) from last_error
 
 
 __all__ = [
     "MACE_OFF_MODELS",
     "MACE_OFF_MODEL_CHOICES",
     "MACE_OFF_MODEL_SHA256",
+    "MACE_OFF_MODEL_URLS",
     "download_mace_off_model",
     "get_mace_off_cache_dir",
 ]
