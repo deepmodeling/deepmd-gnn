@@ -98,11 +98,9 @@ ts::Tensor edge_index_kernel(const ts::Tensor& nlist_tensor,
   }
 
   const int64_t edge_size = static_cast<int64_t>(edge_index.size() / 2);
-  ts::Tensor edge_index_tensor = ts::empty(
-      {edge_size, 2},
-      th::ScalarType::Long,
-      th::Layout::Strided,
-      ts::Device(th::DeviceType::CPU));
+  ts::Tensor edge_index_tensor =
+      ts::empty({edge_size, 2}, th::ScalarType::Long, th::Layout::Strided,
+                ts::Device(th::DeviceType::CPU));
   int64_t* edge_index_data = edge_index_tensor.mutable_data_ptr<int64_t>();
   std::copy(edge_index.begin(), edge_index.end(), edge_index_data);
   return ts::to(edge_index_tensor, nlist_tensor.device());
