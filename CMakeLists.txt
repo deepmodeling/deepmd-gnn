@@ -45,27 +45,14 @@ if(BUILD_CPP_IF
   list(APPEND CMAKE_PREFIX_PATH ${PYTORCH_CMAKE_PREFIX_PATH})
 endif()
 find_package(Torch REQUIRED)
+if(Torch_VERSION VERSION_LESS "2.10.0")
+  message(FATAL_ERROR "deepmd-gnn OP requires PyTorch >= 2.10.0 for the "
+                      "LibTorch Stable ABI.")
+endif()
 if(NOT Torch_VERSION VERSION_LESS "2.1.0")
   set_if_higher(CMAKE_CXX_STANDARD 17)
 elseif(NOT Torch_VERSION VERSION_LESS "1.5.0")
   set_if_higher(CMAKE_CXX_STANDARD 14)
-endif()
-string(REGEX MATCH "_GLIBCXX_USE_CXX11_ABI=([0-9]+)" CXXABI_PT_MATCH
-             "${TORCH_CXX_FLAGS}")
-if(CXXABI_PT_MATCH)
-  set(OP_CXX_ABI_PT ${CMAKE_MATCH_1})
-  message(STATUS "PyTorch CXX11 ABI: ${CMAKE_MATCH_1}")
-else()
-  # Maybe in macos/windows
-  if(UNIX
-     AND NOT APPLE
-     AND Torch_VERSION VERSION_GREATER_EQUAL "2.8.0")
-    # https://github.com/deepmodeling/deepmd-kit/issues/4877
-    # torch.compiled_with_cxx11_abi in PyTorch 2.8 always return True
-    set(OP_CXX_ABI_PT 1)
-  else()
-    set(OP_CXX_ABI_PT 0)
-  endif()
 endif()
 
 # define build type

@@ -3,9 +3,6 @@ file(GLOB OP_SRC edge_index.cc)
 add_library(deepmd_gnn MODULE ${OP_SRC})
 # link: libdeepmd libtorch
 target_link_libraries(deepmd_gnn PRIVATE ${TORCH_LIBRARIES})
-target_compile_definitions(
-  deepmd_gnn
-  PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:_GLIBCXX_USE_CXX11_ABI=${OP_CXX_ABI_PT}>")
 if(APPLE)
   set_target_properties(deepmd_gnn PROPERTIES INSTALL_RPATH "@loader_path")
 else()

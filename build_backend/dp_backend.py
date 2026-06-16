@@ -36,6 +36,7 @@ def cibuildwheel_dependencies() -> list[str]:
         or os.environ.get("READTHEDOCS", "0") == "True"
     ):
         return [
+            "torch>=2.10",
             "deepmd-kit[torch]>=3.0.0b2",
         ]
     return []
