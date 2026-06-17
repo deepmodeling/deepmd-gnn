@@ -56,6 +56,7 @@ from mace.modules import (
 
 import deepmd_gnn.op  # noqa: F401
 from deepmd_gnn import env as deepmd_gnn_env
+from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
 
 
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
@@ -895,29 +896,12 @@ class MaceModel(BaseModel):
         )
         if do_atomic_virial:
             if compute_displacement and displacement is not None:
-                atomic_virial_local = torch.zeros(
-                    (nf, nloc, 9),
-                    dtype=extended_coord_ff.dtype,
-                    device=extended_coord_ff.device,
+                atomic_virial[:, :nloc, 0, :] = derive_atomic_virial_from_displacement(
+                    atom_energy,
+                    displacement,
+                    nloc,
+                    self.training,
                 )
-                for ii in range(nloc):
-                    atom_energy_ii = atom_energy[:, ii]
-                    atom_grad_outputs = torch.jit.annotate(
-                        list[Optional[torch.Tensor]],
-                        [torch.ones_like(atom_energy_ii)],
-                    )
-                    atom_virial_ii = torch.autograd.grad(
-                        outputs=[atom_energy_ii],
-                        inputs=[displacement],
-                        grad_outputs=atom_grad_outputs,
-                        retain_graph=True,
-                        create_graph=self.training,
-                        allow_unused=True,
-                    )[0]
-                    if atom_virial_ii is None:
-                        atom_virial_ii = torch.zeros_like(displacement)
-                    atomic_virial_local[:, ii, :] = (-atom_virial_ii).view(nf, 9)
-                atomic_virial[:, :nloc, 0, :] = atomic_virial_local
             else:
                 atomic_virial[:, :, 0, :] = atomic_virial_fallback.view(nf, nall, 9)
 
