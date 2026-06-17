@@ -221,11 +221,8 @@ class ModelTestCase:
         test_spin = getattr(self, "test_spin", False)
         nf = 2
         natoms = 5
-        aprec = (
-            0
-            if self.aprec_dict.get("test_forward", None) is None
-            else self.aprec_dict["test_forward"]
-        )
+        aprec_value = self.aprec_dict.get("test_forward")
+        aprec = 0.0 if aprec_value is None else aprec_value
         rng = np.random.default_rng(GLOBAL_SEED)
         coord = 4.0 * rng.random([1, natoms, 3]).repeat(nf, 0).reshape([nf, -1])
         atype = np.array([[0, 0, 0, 1, 1] * nf], dtype=int).reshape([nf, -1])
