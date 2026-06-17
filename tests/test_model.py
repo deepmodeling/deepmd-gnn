@@ -162,6 +162,8 @@ class ModelTestCase:
     """Skip test method."""
     output_def: dict[str, Any]
     """Output definition."""
+    supports_atomic_virial: bool = False
+    """Whether the model provides atomic virials suitable for finite-difference tests."""
 
     def test_get_type_map(self) -> None:
         """Test get_type_map."""
@@ -219,11 +221,8 @@ class ModelTestCase:
         test_spin = getattr(self, "test_spin", False)
         nf = 2
         natoms = 5
-        aprec = (
-            0
-            if self.aprec_dict.get("test_forward", None) is None
-            else self.aprec_dict["test_forward"]
-        )
+        aprec_value = self.aprec_dict.get("test_forward")
+        aprec = 0.0 if aprec_value is None else aprec_value
         rng = np.random.default_rng(GLOBAL_SEED)
         coord = 4.0 * rng.random([1, natoms, 3]).repeat(nf, 0).reshape([nf, -1])
         atype = np.array([[0, 0, 0, 1, 1] * nf], dtype=int).reshape([nf, -1])
@@ -268,6 +267,9 @@ class ModelTestCase:
             fparam = rng.random([nf, self.module.get_dim_fparam()])
         ret = []
         ret_lower = []
+        do_atomic_virial = (
+            self.supports_atomic_virial and "atom_virial" in self.output_def
+        )
         for _module in self.modules_to_test:
             module = self.forward_wrapper(_module)
             input_dict = {
@@ -277,6 +279,8 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
+            if do_atomic_virial:
+                input_dict["do_atomic_virial"] = True
             if test_spin:
                 input_dict["spin"] = spin
             ret.append(module(**input_dict))
@@ -289,6 +293,8 @@ class ModelTestCase:
                 "fparam": fparam,
                 "mapping": mapping_large,
             }
+            if do_atomic_virial:
+                input_dict_lower["do_atomic_virial"] = True
             if test_spin:
                 input_dict_lower["extended_spin"] = spin_ext
 
@@ -303,6 +309,8 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
+            if do_atomic_virial:
+                input_dict_lower["do_atomic_virial"] = True
             if test_spin:
                 input_dict_lower["extended_spin"] = spin_ext
 
@@ -372,6 +380,21 @@ class ModelTestCase:
             else:
                 continue
             np.testing.assert_allclose(rr1, rr2, atol=aprec)
+        if do_atomic_virial:
+            for rr in ret:
+                np.testing.assert_allclose(
+                    rr["atom_virial"].sum(axis=1).reshape(rr["virial"].shape),
+                    rr["virial"],
+                    atol=max(aprec, 1e-5),
+                    err_msg="compare atom_virial sum and virial",
+                )
+            for rr in ret_lower:
+                np.testing.assert_allclose(
+                    rr["extended_virial"].sum(axis=1).reshape(rr["virial"].shape),
+                    rr["virial"],
+                    atol=max(aprec, 1e-5),
+                    err_msg="compare extended_virial sum and virial",
+                )
 
     def test_permutation(self) -> None:
         """Test permutation."""
@@ -953,6 +976,16 @@ class ModelTestCase:
                 }
                 return module(**input_dict)["energy"]
 
+            def ff_cell_atom(bb):
+                input_dict = {
+                    "coord": stretch_box(coord, cell, bb),
+                    "atype": atype,
+                    "box": bb,
+                    "aparam": aparam,
+                    "fparam": fparam,
+                }
+                return module(**input_dict)["atom_energy"]
+
             fdv = (
                 -(
                     finite_difference(ff_cell, cell, delta=delta)
@@ -970,12 +1003,35 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
-            rfv = module(**input_dict)["virial"]
+            do_atomic_virial = (
+                self.supports_atomic_virial and "atom_virial" in self.output_def
+            )
+            if do_atomic_virial:
+                input_dict["do_atomic_virial"] = True
+            ret = module(**input_dict)
+            rfv = ret["virial"]
             np.testing.assert_almost_equal(
                 fdv.reshape(-1, 9),
                 rfv.reshape(-1, 9),
                 decimal=places,
             )
+            if do_atomic_virial:
+                fdav = -(
+                    finite_difference(ff_cell_atom, cell, delta=delta)
+                    .reshape(-1, 3, 3)
+                    .transpose(0, 2, 1)
+                    @ cell.reshape(-1, 3, 3)
+                ).reshape(-1, 9)
+                np.testing.assert_almost_equal(
+                    fdav,
+                    ret["atom_virial"].reshape(-1, 9),
+                    decimal=places,
+                )
+                np.testing.assert_almost_equal(
+                    ret["atom_virial"].sum(axis=1).reshape(-1, 9),
+                    rfv.reshape(-1, 9),
+                    decimal=places,
+                )
         else:
             # not support virial by far
             pass
@@ -1083,6 +1139,7 @@ class TestMaceModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: igno
         cls.expected_dim_fparam = 0
         cls.expected_dim_aparam = 0
         cls.expected_nmpnn = 2
+        cls.supports_atomic_virial = True
 
 
 class TestNequipModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: ignore[misc]
@@ -1125,3 +1182,4 @@ class TestNequipModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: ig
         cls.expected_dim_fparam = 0
         cls.expected_dim_aparam = 0
         cls.expected_nmpnn = 2
+        cls.supports_atomic_virial = True

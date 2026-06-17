@@ -47,6 +47,8 @@ from e3nn.util.jit import (
 )
 from nequip.model import model_from_config
 
+from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+
 
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
     try:
@@ -439,9 +441,14 @@ class NequipModel(BaseModel):
         model_predict["atom_energy"] = model_ret["energy"]
         model_predict["energy"] = model_ret["energy_redu"]
         model_predict["force"] = model_ret["energy_derv_r"].squeeze(-2)
-        model_predict["virial"] = model_ret["energy_derv_c_redu"].squeeze(-2)
+        # The output transform recomputes reduced virial from per-atom virials;
+        # keep the displacement-gradient value when atom virials are not requested.
+        model_predict["virial"] = model_ret_lower["energy_derv_c_redu"].squeeze(-2)
         if do_atomic_virial:
-            model_predict["atom_virial"] = model_ret["energy_derv_c"].squeeze(-3)
+            model_predict["atom_virial"] = model_ret_lower["energy_derv_c"][
+                :,
+                :nloc,
+            ].squeeze(-3)
         return model_predict
 
     @torch.jit.export
@@ -518,7 +525,7 @@ class NequipModel(BaseModel):
         mapping: Optional[torch.Tensor] = None,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
-        do_atomic_virial: bool = False,  # noqa: ARG002
+        do_atomic_virial: bool = False,
         comm_dict: Optional[dict[str, torch.Tensor]] = None,
         box: Optional[torch.Tensor] = None,
     ) -> dict[str, torch.Tensor]:
@@ -562,7 +569,6 @@ class NequipModel(BaseModel):
         extended_atype = extended_atype.to(torch.int64)
         nall = extended_coord.shape[1]
 
-        # fake as one frame
         extended_coord_ff = extended_coord.view(nf * nall, 3)
         extended_atype_ff = extended_atype.view(nf * nall)
         edge_index = torch.ops.deepmd_gnn.edge_index(
@@ -576,33 +582,21 @@ class NequipModel(BaseModel):
 
         # nequip can convert dtype by itself
         default_dtype = torch.float64
-        extended_coord_ff = extended_coord_ff.to(default_dtype)
-        extended_coord_ff.requires_grad_(True)  # noqa: FBT003
+        extended_coord_grad = extended_coord.to(default_dtype)
+        extended_coord_grad.requires_grad_(requires_grad=True)
+        extended_coord_ff = extended_coord_grad.view(nf * nall, 3)
 
-        input_dict = {
-            "pos": extended_coord_ff,
+        input_dict: dict[str, torch.Tensor] = {
             "edge_index": edge_index,
             "atom_types": extended_atype_ff,
         }
-        if box is not None and mapping is not None:
-            # pass box, map edge index to real
-            box_ff = box.to(extended_coord_ff.device)
-            input_dict["cell"] = box_ff
-            input_dict["pbc"] = torch.zeros(
-                3,
-                dtype=torch.bool,
-                device=box_ff.device,
-            )
-            batch = torch.arange(nf, device=box_ff.device).repeat(nall)
-            input_dict["batch"] = batch
-            ptr = torch.arange(
-                start=0,
-                end=nf * nall + 1,
-                step=nall,
-                dtype=torch.int64,
-                device=batch.device,
-            )
-            input_dict["ptr"] = ptr
+        nedge = edge_index.shape[1]
+        shifts = torch.zeros(
+            (nedge, 3),
+            dtype=default_dtype,
+            device=extended_coord_ff.device,
+        )
+        if box is not None and mapping is not None and nloc < nall:
             mapping_ff = mapping.view(nf * nall) + torch.arange(
                 0,
                 nf * nall,
@@ -614,23 +608,73 @@ class NequipModel(BaseModel):
             shifts = shifts_atoms[edge_index[1]] - shifts_atoms[edge_index[0]]
             edge_index = mapping_ff[edge_index]
             input_dict["edge_index"] = edge_index
-            rec_cell, _ = torch.linalg.inv_ex(box_ff.view(nf, 3, 3))
-            edge_cell_shift = torch.einsum(
-                "ni,nij->nj",
-                shifts,
-                rec_cell[batch[edge_index[0]]],
+
+        batch = (
+            torch.arange(
+                nf,
+                dtype=torch.int64,
+                device=extended_coord_ff.device,
+            )
+            .unsqueeze(-1)
+            .expand(nf, nall)
+            .reshape(-1)
+        )
+        ptr = torch.arange(
+            0,
+            (nf + 1) * nall,
+            nall,
+            dtype=torch.int64,
+            device=extended_coord_ff.device,
+        )
+
+        compute_displacement = box is not None
+        displacement = torch.jit.annotate(Optional[torch.Tensor], None)
+        if box is not None:
+            box_tensor = (
+                box.view(nf, 3, 3).to(default_dtype).to(extended_coord_ff.device)
+            )
+            input_dict["batch"] = batch
+            input_dict["ptr"] = ptr
+            input_dict["pbc"] = torch.zeros(
+                3,
+                dtype=torch.bool,
+                device=extended_coord_ff.device,
+            )
+            edge_batch = torch.div(edge_index[0], nall, rounding_mode="floor")
+            inv_box = torch.linalg.inv(box_tensor)
+            edge_cell_shift = torch.einsum("ec,ecb->eb", shifts, inv_box[edge_batch])
+            displacement = torch.zeros(
+                (nf, 3, 3),
+                dtype=extended_coord_ff.dtype,
+                device=extended_coord_ff.device,
+            )
+            displacement.requires_grad_(requires_grad=True)
+            symmetric_displacement = 0.5 * (
+                displacement + displacement.transpose(-1, -2)
+            )
+            input_dict["pos"] = extended_coord_ff + torch.einsum(
+                "be,bec->bc",
+                extended_coord_ff,
+                symmetric_displacement[batch],
+            )
+            input_dict["cell"] = box_tensor + torch.matmul(
+                box_tensor,
+                symmetric_displacement,
             )
             input_dict["edge_cell_shift"] = edge_cell_shift
+        else:
+            input_dict["pos"] = extended_coord_ff
 
         ret = self.model.forward(
             input_dict,
         )
 
-        atom_energy = ret["atomic_energy"]
-        if atom_energy is None:
+        atom_energy_all = ret["atomic_energy"]
+        if atom_energy_all is None:
             msg = "atom_energy is None"
             raise ValueError(msg)
-        atom_energy = atom_energy.view(nf, nall).to(extended_coord_.dtype)[:, :nloc]
+        atom_energy_all = atom_energy_all.view(nf, nall)
+        atom_energy = atom_energy_all[:, :nloc]
         # adds e0
         atom_energy = atom_energy + self.e0[extended_atype[:, :nloc]].view(
             nf,
@@ -638,38 +682,82 @@ class NequipModel(BaseModel):
         ).to(
             atom_energy.dtype,
         )
-        energy = torch.sum(atom_energy, dim=1).view(nf, 1).to(extended_coord_.dtype)
-        grad_outputs: list[Optional[torch.Tensor]] = [
-            torch.ones_like(energy),
-        ]
-        force = torch.autograd.grad(
-            outputs=[energy],
-            inputs=[extended_coord_ff],
-            grad_outputs=grad_outputs,
-            retain_graph=True,
-            create_graph=self.training,
-        )[0]
-        if force is None:
-            msg = "force is None"
-            raise ValueError(msg)
-        force = -force
-        atomic_virial = force.unsqueeze(-1).to(
-            extended_coord_.dtype,
-        ) @ extended_coord_ff.unsqueeze(-2).to(
-            extended_coord_.dtype,
+        energy = torch.sum(atom_energy, dim=1)
+        grad_outputs = torch.jit.annotate(
+            list[Optional[torch.Tensor]],
+            [torch.ones_like(energy)],
         )
-        force = force.view(nf, nall, 3).to(extended_coord_.dtype)
-        atomic_virial = atomic_virial.view(nf, nall, 1, 9)
-        virial = torch.sum(atomic_virial, dim=1).view(nf, 9).to(extended_coord_.dtype)
+        retain_graph = self.training or do_atomic_virial
+
+        atomic_virial_fallback = torch.zeros(
+            (nf, nall, 3, 3),
+            dtype=extended_coord_ff.dtype,
+            device=extended_coord_ff.device,
+        )
+        if compute_displacement and displacement is not None:
+            grads = torch.autograd.grad(
+                outputs=[energy],
+                inputs=[extended_coord_ff, displacement],
+                grad_outputs=grad_outputs,
+                retain_graph=retain_graph,
+                create_graph=self.training,
+                allow_unused=True,
+            )
+            force_ff = grads[0]
+            virial_tensor = grads[1]
+            if force_ff is None:
+                msg = "force is None"
+                raise ValueError(msg)
+            if virial_tensor is None:
+                virial_tensor = torch.zeros(
+                    (nf, 3, 3),
+                    dtype=extended_coord_ff.dtype,
+                    device=extended_coord_ff.device,
+                )
+            force = -force_ff.view(nf, nall, 3)
+            virial = -virial_tensor.view(nf, 1, 9)
+        else:
+            force_ff = torch.autograd.grad(
+                outputs=[energy],
+                inputs=[extended_coord_ff],
+                grad_outputs=grad_outputs,
+                retain_graph=retain_graph,
+                create_graph=self.training,
+                allow_unused=True,
+            )[0]
+            if force_ff is None:
+                msg = "force is None"
+                raise ValueError(msg)
+            force = -force_ff.view(nf, nall, 3)
+            atomic_virial_fallback = force.unsqueeze(-1) @ extended_coord_ff.view(
+                nf,
+                nall,
+                3,
+            ).unsqueeze(-2)
+            virial = torch.sum(atomic_virial_fallback, dim=1).view(nf, 1, 9)
+
+        atomic_virial = torch.zeros(
+            (nf, nall, 1, 9),
+            dtype=extended_coord_ff.dtype,
+            device=extended_coord_ff.device,
+        )
+        if do_atomic_virial:
+            if compute_displacement and displacement is not None:
+                atomic_virial[:, :nloc, 0, :] = derive_atomic_virial_from_displacement(
+                    atom_energy,
+                    displacement,
+                    nloc,
+                    self.training,
+                )
+            else:
+                atomic_virial[:, :, 0, :] = atomic_virial_fallback.view(nf, nall, 9)
 
         return {
-            "energy_redu": energy.view(nf, 1),
-            "energy_derv_r": force.view(nf, nall, 1, 3),
-            "energy_derv_c_redu": virial.view(nf, 1, 9),
-            # take the first nloc atoms to match other models
-            "energy": atom_energy.view(nf, nloc, 1),
-            # fake atom_virial
-            "energy_derv_c": atomic_virial.view(nf, nall, 1, 9),
+            "energy_redu": energy.view(nf, 1).to(extended_coord_.dtype),
+            "energy_derv_r": force.view(nf, nall, 1, 3).to(extended_coord_.dtype),
+            "energy_derv_c_redu": virial.to(extended_coord_.dtype),
+            "energy": atom_energy.view(nf, nloc, 1).to(extended_coord_.dtype),
+            "energy_derv_c": atomic_virial.to(extended_coord_.dtype),
         }
 
     def serialize(self) -> dict:
