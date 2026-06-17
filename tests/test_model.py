@@ -1170,3 +1170,4 @@ class TestNequipModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: ig
         cls.expected_dim_fparam = 0
         cls.expected_dim_aparam = 0
         cls.expected_nmpnn = 2
+        cls.supports_atomic_virial = True
