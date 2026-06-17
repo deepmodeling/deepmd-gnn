@@ -383,6 +383,21 @@ class ModelTestCase:
             else:
                 continue
             np.testing.assert_allclose(rr1, rr2, atol=aprec)
+        if do_atomic_virial:
+            for rr in ret:
+                np.testing.assert_allclose(
+                    rr["atom_virial"].sum(axis=1).reshape(rr["virial"].shape),
+                    rr["virial"],
+                    atol=max(aprec, 1e-5),
+                    err_msg="compare atom_virial sum and virial",
+                )
+            for rr in ret_lower:
+                np.testing.assert_allclose(
+                    rr["extended_virial"].sum(axis=1).reshape(rr["virial"].shape),
+                    rr["virial"],
+                    atol=max(aprec, 1e-5),
+                    err_msg="compare extended_virial sum and virial",
+                )
 
     def test_permutation(self) -> None:
         """Test permutation."""

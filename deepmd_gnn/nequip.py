@@ -441,6 +441,8 @@ class NequipModel(BaseModel):
         model_predict["atom_energy"] = model_ret["energy"]
         model_predict["energy"] = model_ret["energy_redu"]
         model_predict["force"] = model_ret["energy_derv_r"].squeeze(-2)
+        # The output transform recomputes reduced virial from per-atom virials;
+        # keep the displacement-gradient value when atom virials are not requested.
         model_predict["virial"] = model_ret_lower["energy_derv_c_redu"].squeeze(-2)
         if do_atomic_virial:
             model_predict["atom_virial"] = model_ret_lower["energy_derv_c"][
@@ -704,7 +706,8 @@ class NequipModel(BaseModel):
             force_ff = grads[0]
             virial_tensor = grads[1]
             if force_ff is None:
-                force_ff = torch.zeros_like(extended_coord_ff)
+                msg = "force is None"
+                raise ValueError(msg)
             if virial_tensor is None:
                 virial_tensor = torch.zeros(
                     (nf, 3, 3),
@@ -723,7 +726,8 @@ class NequipModel(BaseModel):
                 allow_unused=True,
             )[0]
             if force_ff is None:
-                force_ff = torch.zeros_like(extended_coord_ff)
+                msg = "force is None"
+                raise ValueError(msg)
             force = -force_ff.view(nf, nall, 3)
             atomic_virial_fallback = force.unsqueeze(-1) @ extended_coord_ff.view(
                 nf,
