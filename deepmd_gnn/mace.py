@@ -790,7 +790,7 @@ class MaceModel(BaseModel):
                 dtype=extended_coord_ff.dtype,
                 device=extended_coord_ff.device,
             )
-            displacement.requires_grad_(True)
+            displacement.requires_grad_(requires_grad=True)
             symmetric_displacement = 0.5 * (
                 displacement + displacement.transpose(-1, -2)
             )

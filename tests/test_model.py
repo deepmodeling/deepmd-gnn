@@ -162,6 +162,8 @@ class ModelTestCase:
     """Skip test method."""
     output_def: dict[str, Any]
     """Output definition."""
+    supports_atomic_virial: bool = False
+    """Whether the model provides atomic virials suitable for finite-difference tests."""
 
     def test_get_type_map(self) -> None:
         """Test get_type_map."""
@@ -268,6 +270,9 @@ class ModelTestCase:
             fparam = rng.random([nf, self.module.get_dim_fparam()])
         ret = []
         ret_lower = []
+        do_atomic_virial = (
+            self.supports_atomic_virial and "atom_virial" in self.output_def
+        )
         for _module in self.modules_to_test:
             module = self.forward_wrapper(_module)
             input_dict = {
@@ -277,7 +282,7 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
-            if "atom_virial" in self.output_def:
+            if do_atomic_virial:
                 input_dict["do_atomic_virial"] = True
             if test_spin:
                 input_dict["spin"] = spin
@@ -291,7 +296,7 @@ class ModelTestCase:
                 "fparam": fparam,
                 "mapping": mapping_large,
             }
-            if "atom_virial" in self.output_def:
+            if do_atomic_virial:
                 input_dict_lower["do_atomic_virial"] = True
             if test_spin:
                 input_dict_lower["extended_spin"] = spin_ext
@@ -307,7 +312,7 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
-            if "atom_virial" in self.output_def:
+            if do_atomic_virial:
                 input_dict_lower["do_atomic_virial"] = True
             if test_spin:
                 input_dict_lower["extended_spin"] = spin_ext
@@ -986,7 +991,10 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
-            if "atom_virial" in self.output_def:
+            do_atomic_virial = (
+                self.supports_atomic_virial and "atom_virial" in self.output_def
+            )
+            if do_atomic_virial:
                 input_dict["do_atomic_virial"] = True
             ret = module(**input_dict)
             rfv = ret["virial"]
@@ -995,7 +1003,7 @@ class ModelTestCase:
                 rfv.reshape(-1, 9),
                 decimal=places,
             )
-            if "atom_virial" in self.output_def:
+            if do_atomic_virial:
                 fdav = -(
                     finite_difference(ff_cell_atom, cell, delta=delta)
                     .reshape(-1, 3, 3)
@@ -1119,6 +1127,7 @@ class TestMaceModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: igno
         cls.expected_dim_fparam = 0
         cls.expected_dim_aparam = 0
         cls.expected_nmpnn = 2
+        cls.supports_atomic_virial = True
 
 
 class TestNequipModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: ignore[misc]

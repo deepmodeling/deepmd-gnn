@@ -120,7 +120,7 @@ def _native_mace_reference_outputs(
         dtype=extended_coord_ff.dtype,
         device=extended_coord_ff.device,
     )
-    displacement.requires_grad_(True)
+    displacement.requires_grad_(requires_grad=True)
     symmetric_displacement = 0.5 * (displacement + displacement.transpose(-1, -2))
     positions = extended_coord_ff + torch.einsum(
         "be,bec->bc",
