@@ -76,11 +76,14 @@ def _edge_index_pytorch(
     nloc = nlist_3d.shape[1]
     nall = atype_2d.shape[1]
 
-    frame_offsets = torch.arange(
-        nf,
-        dtype=torch.int64,
-        device=device,
-    ).view(nf, 1, 1) * nall
+    frame_offsets = (
+        torch.arange(
+            nf,
+            dtype=torch.int64,
+            device=device,
+        ).view(nf, 1, 1)
+        * nall
+    )
     center_index = torch.arange(
         nloc,
         dtype=torch.int64,

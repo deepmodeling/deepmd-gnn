@@ -575,7 +575,9 @@ class NequipModel(BaseModel):
         edge_index = build_edge_index(
             nlist,
             extended_atype,
-            torch.tensor(self.mm_types, dtype=torch.int64, device=extended_atype.device),
+            torch.tensor(
+                self.mm_types, dtype=torch.int64, device=extended_atype.device
+            ),
         )
         edge_index = edge_index.T
         # Nequip and MACE have different defination for edge_index
