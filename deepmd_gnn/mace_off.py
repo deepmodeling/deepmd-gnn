@@ -9,20 +9,23 @@ DPRc/QM/MM atom-type semantics from the checkpoint.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import importlib
+import io
+from contextlib import contextmanager, redirect_stdout
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
 import torch
-from deepmd.pt import model as _deepmd_pt_model  # noqa: F401
-from e3nn.util.jit import script as e3nn_script
-from mace.modules import ScaleShiftMACE, gate_dict
 
-from deepmd_gnn.mace import ELEMENTS, MaceModel
 from deepmd_gnn.mace_off_cli import download_mace_off_model
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
+
+    from mace.modules import ScaleShiftMACE
+
+    from deepmd_gnn.mace import MaceModel
 
 _ALLOWED_MISSING_STATE_DICT_SUFFIXES = ("_zeroed",)
 
@@ -57,6 +60,32 @@ class _InferredMaceConfig(TypedDict):
     avg_num_neighbors: float
 
 
+@lru_cache(maxsize=1)
+def _load_mace_modules() -> tuple[type[ScaleShiftMACE], dict[str, object]]:
+    # mace prints optional cuequivariance availability to stdout at import time.
+    # Keep library import chatter out of CLI stdout while preserving real errors.
+    with redirect_stdout(io.StringIO()):
+        mace_modules = importlib.import_module("mace.modules")
+    return mace_modules.ScaleShiftMACE, mace_modules.gate_dict
+
+
+@lru_cache(maxsize=1)
+def _load_deepmd_mace_symbols() -> tuple[list[str], type[MaceModel]]:
+    # Import deepmd first so its entry-point loader registers DeePMD-GNN models
+    # without causing a circular import through deepmd_gnn.mace.
+    with redirect_stdout(io.StringIO()):
+        importlib.import_module("deepmd.pt.model")
+        mace_module = importlib.import_module("deepmd_gnn.mace")
+    return mace_module.ELEMENTS, mace_module.MaceModel
+
+
+@lru_cache(maxsize=1)
+def _load_e3nn_script() -> Callable[[torch.nn.Module], torch.nn.Module]:
+    with redirect_stdout(io.StringIO()):
+        e3nn_jit = importlib.import_module("e3nn.util.jit")
+    return e3nn_jit.script
+
+
 @contextmanager
 def _temporary_default_dtype(dtype: torch.dtype) -> Iterator[None]:
     old_dtype = torch.get_default_dtype()
@@ -68,18 +97,20 @@ def _temporary_default_dtype(dtype: torch.dtype) -> Iterator[None]:
 
 
 def _validate_atomic_numbers(atomic_numbers: list[int]) -> None:
+    elements = _load_deepmd_mace_symbols()[0]
     if not atomic_numbers:
         msg = "Loaded model has empty atomic_numbers"
         raise ValueError(msg)
-    if any(z < 1 or z > len(ELEMENTS) for z in atomic_numbers):
+    if any(z < 1 or z > len(elements) for z in atomic_numbers):
         msg = (
             f"Invalid atomic numbers found: {atomic_numbers}. "
-            f"Must be between 1 and {len(ELEMENTS)}"
+            f"Must be between 1 and {len(elements)}"
         )
         raise ValueError(msg)
 
 
 def _infer_gate_name(mace_model: ScaleShiftMACE) -> str:
+    gate_dict = _load_mace_modules()[1]
     if not mace_model.readouts:
         return "None"
 
@@ -211,11 +242,12 @@ def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
 
 
 def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> _InferredMaceConfig:
+    elements = _load_deepmd_mace_symbols()[0]
     _validate_checkpoint_scope(mace_model)
     atomic_numbers = mace_model.atomic_numbers.tolist()
 
     return {
-        "type_map": [ELEMENTS[z - 1] for z in atomic_numbers],
+        "type_map": [elements[z - 1] for z in atomic_numbers],
         "r_max": float(mace_model.r_max),
         "num_radial_basis": len(mace_model.radial_embedding.bessel_fn.bessel_weights),
         "num_cutoff_basis": int(mace_model.radial_embedding.cutoff_fn.p.item()),
@@ -246,8 +278,9 @@ def _load_mace_checkpoint(model_path: Path, device: str) -> ScaleShiftMACE:
     callers should only use trusted checkpoint files, whether downloaded from the
     official download helper or supplied via a trusted local path.
     """
+    scale_shift_mace_cls = _load_mace_modules()[0]
     model = torch.load(str(model_path), map_location=device, weights_only=False)
-    if not isinstance(model, ScaleShiftMACE):
+    if not isinstance(model, scale_shift_mace_cls):
         msg = (
             "Loaded checkpoint is not a ScaleShiftMACE model: "
             f"{model.__class__.__module__}.{model.__class__.__name__}"
@@ -320,10 +353,11 @@ def load_mace_off_model(
 
     mace_model = _load_mace_checkpoint(model_path, device=device)
     config = _infer_deepmd_config(mace_model)
+    mace_model_cls = _load_deepmd_mace_symbols()[1]
 
     source_dtype = mace_model.atomic_energies_fn.atomic_energies.dtype
     with _temporary_default_dtype(source_dtype):
-        deepmd_model = MaceModel(
+        deepmd_model = mace_model_cls(
             type_map=config["type_map"],
             sel=sel,
             r_max=config["r_max"],
@@ -378,6 +412,7 @@ def convert_mace_off_to_deepmd(
         device=device,
     )
     output_path = Path(output_file)
+    e3nn_script = _load_e3nn_script()
     model.model = e3nn_script(model.model)
     scripted_model = torch.jit.script(model)
     torch.jit.save(scripted_model, str(output_path))
