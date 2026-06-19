@@ -91,28 +91,28 @@ For details, follow [DeePMD-kit documentation](https://docs.deepmodeling.com/pro
 GNN models use message passing neural networks,
 so the neighbor list built with traditional cutoff radius will not work,
 since the ghost atoms also need to build neighbor list.
-By default, the model requests the neighbor list with a cutoff radius of $r_c \times N_{L}$,
-where $r_c$ is set by `r_max` and $N_L$ is set by `num_interactions` (MACE) / `num_layers` (NequIP),
+For NequIP, the model requests the neighbor list with a cutoff radius of $r_c \times N_{L}$,
+where $r_c$ is set by `r_max` and $N_L$ is set by `num_layers`,
 and rebuilds the neighbor list for ghost atoms.
 However, this approach is very inefficient.
 
-The alternative approach for the MACE model (note: NequIP doesn't support such approach) is to use the mapping passed from LAMMPS, which does not support MPI.
-One needs to set `DP_GNN_USE_MAPPING` when freezing the models,
+The MACE model works like a regular DeePMD-kit message-passing model.
+No extra environment variable is needed when freezing the model.
+It advertises message passing to DeePMD-kit, so LAMMPS can use the regular
+neighbor list with a cutoff radius of $r_c$ and DeePMD-kit communicates
+the ghost-atom features through MPI between message-passing layers.
+This requires a DeePMD-kit build whose LAMMPS/PyTorch interface provides
+the message-passing communication op, `border_op`.
 
-```sh
-DP_GNN_USE_MAPPING=1 dp --pt freeze
-```
-
-and request the mapping when using LAMMPS (also requires DeePMD-kit v3.0.0rc0 or above).
+The non-MPI mapping approach is still available for the MACE model
+(note: NequIP doesn't support such approach), but it does not support MPI.
+Request the mapping when using LAMMPS (also requires DeePMD-kit v3.0.0rc0 or above).
 By using the mapping, the ghost atoms will be mapped to the real atoms,
 so the regular neighbor list with a cutoff radius of $r_c$ can be used.
 
 ```lammps
 atom_modify map array
 ```
-
-In the future, we will explore utilizing the MPI to communicate the neighbor list,
-while this approach requires a deep hack for external packages.
 
 ## Parameters
 

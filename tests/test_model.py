@@ -272,6 +272,7 @@ class ModelTestCase:
             self.supports_atomic_virial and "atom_virial" in self.output_def
         )
         for _module in self.modules_to_test:
+            has_message_passing = _module.has_message_passing()
             module = self.forward_wrapper(_module)
             input_dict = {
                 "coord": coord,
@@ -303,21 +304,22 @@ class ModelTestCase:
             rng.shuffle(input_dict_lower["nlist"], axis=-1)
             ret_lower.append(module.forward_lower(**input_dict_lower))
 
-            input_dict_lower = {
-                "extended_coord": coord_ext_large,
-                "extended_atype": atype_ext_large,
-                "nlist": nlist_large,
-                "aparam": aparam,
-                "fparam": fparam,
-            }
-            if do_atomic_virial:
-                input_dict_lower["do_atomic_virial"] = True
-            if test_spin:
-                input_dict_lower["extended_spin"] = spin_ext
+            if not has_message_passing:
+                input_dict_lower = {
+                    "extended_coord": coord_ext_large,
+                    "extended_atype": atype_ext_large,
+                    "nlist": nlist_large,
+                    "aparam": aparam,
+                    "fparam": fparam,
+                }
+                if do_atomic_virial:
+                    input_dict_lower["do_atomic_virial"] = True
+                if test_spin:
+                    input_dict_lower["extended_spin"] = spin_ext
 
-            # use shuffled nlist, simulating the lammps interface
-            rng.shuffle(input_dict_lower["nlist"], axis=-1)
-            ret_lower.append(module.forward_lower(**input_dict_lower))
+                # use shuffled nlist, simulating the lammps interface
+                rng.shuffle(input_dict_lower["nlist"], axis=-1)
+                ret_lower.append(module.forward_lower(**input_dict_lower))
 
         for kk in ret[0]:
             # ensure the first frame and the second frame are the same
@@ -1135,11 +1137,11 @@ class TestMaceModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: igno
         with torch.jit.optimized_execution(should_optimize=False):
             cls._script_module = torch.jit.script(cls.module)
         cls.output_def = cls.module.translated_output_def()
-        cls.expected_has_message_passing = False
+        cls.expected_has_message_passing = True
         cls.expected_sel_type = []
         cls.expected_dim_fparam = 0
         cls.expected_dim_aparam = 0
-        cls.expected_nmpnn = 2
+        cls.expected_nmpnn = 1
         cls.supports_atomic_virial = True
 
 
