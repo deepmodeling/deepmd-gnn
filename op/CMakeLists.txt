@@ -1,8 +1,13 @@
 file(GLOB OP_SRC edge_index.cc)
 
 add_library(deepmd_gnn MODULE ${OP_SRC})
-# link: libdeepmd libtorch
-target_link_libraries(deepmd_gnn PRIVATE ${TORCH_LIBRARIES})
+target_include_directories(deepmd_gnn PRIVATE ${TORCH_INCLUDE_DIRS})
+if(TORCH_CXX_FLAGS)
+  separate_arguments(DEEPMD_GNN_TORCH_CXX_FLAGS NATIVE_COMMAND
+                     "${TORCH_CXX_FLAGS}")
+  target_compile_options(deepmd_gnn PRIVATE ${DEEPMD_GNN_TORCH_CXX_FLAGS})
+endif()
+target_link_libraries(deepmd_gnn PRIVATE ${DEEPMD_GNN_TORCH_LIBRARIES})
 if(APPLE)
   set_target_properties(deepmd_gnn PROPERTIES INSTALL_RPATH "@loader_path")
 else()
