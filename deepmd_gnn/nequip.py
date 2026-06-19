@@ -133,7 +133,7 @@ class NequipModel(BaseModel):
 
     mm_types: list[int]
     e0: torch.Tensor
-    _observed_type: Optional[list[str]]
+    _observed_type: list[str] | None
 
     def __init__(
         self,
@@ -237,7 +237,7 @@ class NequipModel(BaseModel):
         return self
 
     @property
-    def observed_type(self) -> Optional[list[str]]:
+    def observed_type(self) -> list[str] | None:
         """Observed element types collected during statistics."""
         return self._observed_type
 
@@ -255,8 +255,8 @@ class NequipModel(BaseModel):
     def compute_or_load_stat(
         self,
         sampled_func,  # noqa: ANN001
-        stat_file_path: Optional[DPPath] = None,
-        preset_observed_type: Optional[list[str]] = None,
+        stat_file_path: DPPath | None = None,
+        preset_observed_type: list[str] | None = None,
     ) -> None:
         """Compute or load the statistics parameters of the model.
 
@@ -386,9 +386,9 @@ class NequipModel(BaseModel):
         self,
         coord: torch.Tensor,
         atype: torch.Tensor,
-        box: Optional[torch.Tensor] = None,
-        fparam: Optional[torch.Tensor] = None,
-        aparam: Optional[torch.Tensor] = None,
+        box: torch.Tensor | None = None,
+        fparam: torch.Tensor | None = None,
+        aparam: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Forward pass of the model.
@@ -457,11 +457,11 @@ class NequipModel(BaseModel):
         extended_coord: torch.Tensor,
         extended_atype: torch.Tensor,
         nlist: torch.Tensor,
-        mapping: Optional[torch.Tensor] = None,
-        fparam: Optional[torch.Tensor] = None,
-        aparam: Optional[torch.Tensor] = None,
+        mapping: torch.Tensor | None = None,
+        fparam: torch.Tensor | None = None,
+        aparam: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
-        comm_dict: Optional[dict[str, torch.Tensor]] = None,
+        comm_dict: dict[str, torch.Tensor] | None = None,
     ) -> dict[str, torch.Tensor]:
         """Forward lower pass of the model.
 
@@ -522,12 +522,12 @@ class NequipModel(BaseModel):
         extended_coord: torch.Tensor,
         extended_atype: torch.Tensor,
         nlist: torch.Tensor,
-        mapping: Optional[torch.Tensor] = None,
-        fparam: Optional[torch.Tensor] = None,
-        aparam: Optional[torch.Tensor] = None,
+        mapping: torch.Tensor | None = None,
+        fparam: torch.Tensor | None = None,
+        aparam: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
-        comm_dict: Optional[dict[str, torch.Tensor]] = None,
-        box: Optional[torch.Tensor] = None,
+        comm_dict: dict[str, torch.Tensor] | None = None,
+        box: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Forward lower common pass of the model.
 
@@ -684,7 +684,7 @@ class NequipModel(BaseModel):
         )
         energy = torch.sum(atom_energy, dim=1)
         grad_outputs = torch.jit.annotate(
-            list[Optional[torch.Tensor]],
+            list[torch.Tensor | None],
             [torch.ones_like(energy)],
         )
         retain_graph = self.training or do_atomic_virial
@@ -805,9 +805,9 @@ class NequipModel(BaseModel):
     def update_sel(
         cls,
         train_data: DeepmdDataSystem,
-        type_map: Optional[list[str]],
+        type_map: list[str] | None,
         local_jdata: dict,
-    ) -> tuple[dict, Optional[float]]:
+    ) -> tuple[dict, float | None]:
         """Update the selection and perform neighbor statistics.
 
         Parameters

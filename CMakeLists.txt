@@ -48,8 +48,8 @@ if(BUILD_CPP_IF
 endif()
 
 if(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK)
-  find_program(DEEPMD_GNN_NVCC_EXECUTABLE nvcc
-               HINTS "$ENV{CUDA_HOME}/bin" "$ENV{CUDA_PATH}/bin")
+  find_program(DEEPMD_GNN_NVCC_EXECUTABLE nvcc HINTS "$ENV{CUDA_HOME}/bin"
+                                                     "$ENV{CUDA_PATH}/bin")
   if(NOT DEEPMD_GNN_NVCC_EXECUTABLE AND NOT TARGET torch::cudart)
     message(
       STATUS
