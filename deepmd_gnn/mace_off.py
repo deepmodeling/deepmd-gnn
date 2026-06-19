@@ -23,8 +23,9 @@ from deepmd_gnn.mace_off_cli import download_mace_off_model
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from deepmd_gnn.mace import MaceModel
     from mace.modules import ScaleShiftMACE
+
+    from deepmd_gnn.mace import MaceModel
 
 _ALLOWED_MISSING_STATE_DICT_SUFFIXES = ("_zeroed",)
 
