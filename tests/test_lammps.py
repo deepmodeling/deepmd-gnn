@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import os
 import platform
 import re
@@ -46,19 +48,19 @@ def _prepend_env_path(env: dict[str, str], name: str, *paths: Path | str) -> Non
 
 def _deepmd_lib_dir() -> Path:
     try:
-        from deepmd.env import SHARED_LIB_DIR
-    except Exception as exc:  # pragma: no cover - depends on optional install
+        deepmd_env = importlib.import_module("deepmd.env")
+    except ImportError as exc:  # pragma: no cover - depends on optional install
         _missing_lammps(f"Cannot import deepmd.env: {exc}")
-    return Path(SHARED_LIB_DIR)
+    return Path(deepmd_env.SHARED_LIB_DIR)
 
 
 def _deepmd_gnn_plugin() -> Path:
     try:
-        import deepmd_gnn.lib
-    except Exception as exc:  # pragma: no cover - depends on local build
+        deepmd_gnn_lib = importlib.import_module("deepmd_gnn.lib")
+    except ImportError as exc:  # pragma: no cover - depends on local build
         _missing_lammps(f"Cannot import deepmd_gnn.lib: {exc}")
 
-    shared_lib_dir = Path(deepmd_gnn.lib.__path__[0])
+    shared_lib_dir = Path(deepmd_gnn_lib.__path__[0])
     if platform.system() == "Windows":
         candidates = [shared_lib_dir / "deepmd_gnn.dll"]
     else:
@@ -68,26 +70,25 @@ def _deepmd_gnn_plugin() -> Path:
         if candidate.exists():
             return candidate
     _missing_lammps(f"Cannot find deepmd-gnn C++ plugin in {shared_lib_dir}")
-    raise AssertionError("unreachable")
+    msg = "unreachable"
+    raise AssertionError(msg)
 
 
 def _ensure_lammps_available() -> None:
     if shutil.which("lmp") is not None or shutil.which("lmp_serial") is not None:
         return
-    try:
-        import lammps  # noqa: F401
-    except Exception as exc:  # pragma: no cover - depends on optional install
-        _missing_lammps(f"Cannot find lmp executable or import lammps: {exc}")
+    if importlib.util.find_spec("lammps") is None:
+        _missing_lammps("Cannot find lmp executable or import lammps")
 
 
 def _lammps_env() -> dict[str, str]:
     try:
-        import torch
-    except Exception as exc:  # pragma: no cover - depends on optional install
+        torch = importlib.import_module("torch")
+    except ImportError as exc:  # pragma: no cover - depends on optional install
         _missing_lammps(f"Cannot import torch: {exc}")
     try:
-        import tensorflow as tf
-    except Exception as exc:  # pragma: no cover - depends on optional install
+        tf = importlib.import_module("tensorflow")
+    except ImportError as exc:  # pragma: no cover - depends on optional install
         _missing_lammps(f"Cannot import tensorflow runtime required by LAMMPS: {exc}")
 
     env = os.environ.copy()
@@ -225,14 +226,16 @@ def _run_lammps(input_file: Path, log_file: Path, env: dict[str, str]) -> None:
         return
 
     try:
-        from lammps import lammps
-    except Exception as exc:  # pragma: no cover - depends on optional install
+        lammps_module = importlib.import_module("lammps")
+    except ImportError as exc:  # pragma: no cover - depends on optional install
         _missing_lammps(f"Cannot find lmp executable or import lammps: {exc}")
 
     old_env = os.environ.copy()
     os.environ.update(env)
     try:
-        lmp_instance = lammps(cmdargs=["-log", str(log_file), "-screen", "none"])
+        lmp_instance = lammps_module.lammps(
+            cmdargs=["-log", str(log_file), "-screen", "none"],
+        )
         try:
             lmp_instance.file(str(input_file))
         finally:
