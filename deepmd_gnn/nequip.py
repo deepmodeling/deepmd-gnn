@@ -220,7 +220,7 @@ class NequipModel(BaseModel):
                     "conv_to_output_hidden_irreps_out": conv_to_output_hidden_irreps_out,
                     "model_dtype": precision,
                 },
-            ),
+            ).to(env.DEVICE),
         )
         self.register_buffer(
             "e0",
