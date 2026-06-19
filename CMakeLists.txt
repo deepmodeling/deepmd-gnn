@@ -15,6 +15,8 @@ option(BUILD_PY_IF "Build Python interfaces" OFF)
 option(USE_PT_PYTHON_LIBS "Use PyTorch Python libraries" OFF)
 option(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
        "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable" ON)
+option(DEEPMD_GNN_LINK_TORCH_CUDA "Link the OP against PyTorch CUDA libraries"
+       OFF)
 
 if((NOT BUILD_PY_IF) AND (NOT BUILD_CPP_IF))
   # nothing to do
@@ -62,6 +64,11 @@ find_package(Torch REQUIRED)
 if(Torch_VERSION VERSION_LESS "2.10.0")
   message(FATAL_ERROR "deepmd-gnn OP requires PyTorch >= 2.10.0 for the "
                       "LibTorch Stable ABI.")
+endif()
+set(DEEPMD_GNN_TORCH_LIBRARIES ${TORCH_LIBRARIES})
+if((NOT DEEPMD_GNN_LINK_TORCH_CUDA) AND TARGET torch_cpu)
+  set(DEEPMD_GNN_TORCH_LIBRARIES torch_cpu)
+  message(STATUS "Linking deepmd-gnn OP against PyTorch CPU runtime")
 endif()
 if(NOT Torch_VERSION VERSION_LESS "2.1.0")
   set_if_higher(CMAKE_CXX_STANDARD 17)
