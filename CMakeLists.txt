@@ -13,6 +13,8 @@ endmacro()
 option(BUILD_CPP_IF "Build C++ interfaces" ON)
 option(BUILD_PY_IF "Build Python interfaces" OFF)
 option(USE_PT_PYTHON_LIBS "Use PyTorch Python libraries" OFF)
+option(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
+       "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable" ON)
 
 if((NOT BUILD_PY_IF) AND (NOT BUILD_CPP_IF))
   # nothing to do
@@ -43,6 +45,18 @@ if(BUILD_CPP_IF
     )
   endif()
   list(APPEND CMAKE_PREFIX_PATH ${PYTORCH_CMAKE_PREFIX_PATH})
+endif()
+
+if(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK)
+  find_program(DEEPMD_GNN_NVCC_EXECUTABLE nvcc
+               HINTS "$ENV{CUDA_HOME}/bin" "$ENV{CUDA_PATH}/bin")
+  if(NOT DEEPMD_GNN_NVCC_EXECUTABLE AND NOT TARGET torch::cudart)
+    message(
+      STATUS
+        "nvcc not found; bypassing PyTorch CUDA toolkit discovery for this CPU-only OP"
+    )
+    add_library(torch::cudart INTERFACE IMPORTED)
+  endif()
 endif()
 find_package(Torch REQUIRED)
 if(Torch_VERSION VERSION_LESS "2.10.0")
