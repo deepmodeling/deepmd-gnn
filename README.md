@@ -43,16 +43,13 @@ cd deepmd-gnn
 
 #### Python interface plugin
 
-Python 3.9 or above is required. A C++ compiler that supports C++ 14 (for PyTorch 2.0) or C++ 17 (for PyTorch 2.1 or above) is required.
-
-Assume you have installed [DeePMD-kit](https://github.com/deepmodeling/deepmd-kit) (v3.0.0b2 or above) and [PyTorch](https://github.com/pytorch/pytorch) in an environment, then execute
+Python 3.10 or above is required. A C++ compiler that supports C++ 17 is required.
 
 ```sh
-# expose PyTorch CMake modules
-export CMAKE_PREFIX_PATH=$(python -c "import torch;print(torch.utils.cmake_prefix_path)")
-
 pip install .
 ```
+
+Only PyTorch 2.10 or above is supported.
 
 #### C++ interface plugin
 

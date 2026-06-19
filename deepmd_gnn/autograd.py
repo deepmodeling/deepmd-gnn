@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 
 
@@ -24,7 +22,7 @@ def derive_atomic_virial_from_displacement(
     for ii in range(nloc):
         atom_energy_ii = atom_energy[:, ii]
         atom_grad_outputs = torch.jit.annotate(
-            list[Optional[torch.Tensor]],
+            list[torch.Tensor | None],
             [torch.ones_like(atom_energy_ii)],
         )
         atom_virial_ii = torch.autograd.grad(
