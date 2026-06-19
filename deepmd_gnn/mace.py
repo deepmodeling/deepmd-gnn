@@ -20,7 +20,6 @@ from deepmd.pt.model.model.transform_output import (
 )
 from deepmd.pt.utils import env
 from deepmd.pt.utils.nlist import (
-    build_neighbor_list,
     extend_input_and_build_neighbor_list,
 )
 from deepmd.pt.utils.stat import (
@@ -55,8 +54,29 @@ from mace.modules import (
 )
 
 import deepmd_gnn.op  # noqa: F401
-from deepmd_gnn import env as deepmd_gnn_env
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+
+if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
+
+    def border_op(
+        _argument0: torch.Tensor,
+        _argument1: torch.Tensor,
+        _argument2: torch.Tensor,
+        _argument3: torch.Tensor,
+        _argument4: torch.Tensor,
+        _argument5: torch.Tensor,
+        _argument6: torch.Tensor,
+        _argument7: torch.Tensor,
+        _argument8: torch.Tensor,
+    ) -> list[torch.Tensor]:
+        """TorchScript placeholder used when DeePMD's PT op is not loaded."""
+        msg = (
+            "border_op is unavailable. Build/load DeePMD-kit's PyTorch OP "
+            "library before running MPI message-passing inference."
+        )
+        raise NotImplementedError(msg)
+
+    torch.ops.deepmd.border_op = border_op
 
 
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
@@ -453,9 +473,7 @@ class MaceModel(BaseModel):
     @torch.jit.export
     def get_rcut(self) -> float:
         """Get the cut-off radius."""
-        if deepmd_gnn_env.DP_GNN_USE_MAPPING:
-            return self.rcut
-        return self.rcut * self.num_interactions
+        return self.rcut
 
     @torch.jit.export
     def get_type_map(self) -> list[str]:
@@ -511,6 +529,11 @@ class MaceModel(BaseModel):
     @torch.jit.export
     def has_message_passing(self) -> bool:
         """Return whether the descriptor has message passing."""
+        return self.num_interactions > 1
+
+    @torch.jit.export
+    def need_sorted_nlist_for_lower(self) -> bool:
+        """Return whether lower-interface neighbor lists must be sorted."""
         return False
 
     @torch.jit.export
@@ -617,25 +640,20 @@ class MaceModel(BaseModel):
             The communication dictionary.
         """
         nloc = nlist.shape[1]
-        nf, nall = extended_atype.shape
+        _nf, nall = extended_atype.shape
         # calculate nlist for ghost atoms, as LAMMPS does not calculate it
-        if mapping is None and self.num_interactions > 1 and nloc < nall:
-            if deepmd_gnn_env.DP_GNN_USE_MAPPING:
-                # when setting DP_GNN_USE_MAPPING, ghost atoms are only built
-                # for one message-passing layer
-                msg = (
-                    "When setting DP_GNN_USE_MAPPING, mapping is required. "
-                    "If you are using LAMMPS, set `atom_modify map yes`."
-                )
-                raise ValueError(msg)
-            nlist = build_neighbor_list(
-                extended_coord.view(nf, -1),
-                extended_atype,
-                nall,
-                self.rcut,
-                self.sel,
-                distinguish_types=False,
+        if (
+            mapping is None
+            and comm_dict is None
+            and self.num_interactions > 1
+            and nloc < nall
+        ):
+            msg = (
+                "Multi-layer MACE lower inference requires either comm_dict "
+                "from DeePMD-kit message-passing communication or a mapping "
+                "from extended atoms to local atoms."
             )
+            raise ValueError(msg)
 
         model_ret = self.forward_lower_common(
             nloc,
@@ -701,9 +719,6 @@ class MaceModel(BaseModel):
         if aparam is not None:
             msg = "aparam is unsupported"
             raise ValueError(msg)
-        if comm_dict is not None:
-            msg = "comm_dict is unsupported"
-            raise ValueError(msg)
         nlist = nlist.to(torch.int64)
         extended_atype = extended_atype.to(torch.int64)
         nall = extended_coord.shape[1]
@@ -735,7 +750,12 @@ class MaceModel(BaseModel):
             dtype=default_dtype,
             device=extended_coord_ff.device,
         )
-        if self.num_interactions > 1 and mapping is not None and nloc < nall:
+        if (
+            self.num_interactions > 1
+            and comm_dict is None
+            and mapping is not None
+            and nloc < nall
+        ):
             mapping_ff = mapping.view(nf * nall) + torch.arange(
                 0,
                 nf * nall,
@@ -824,21 +844,32 @@ class MaceModel(BaseModel):
             )
             input_dict["shifts"] = shifts
 
-        ret = self.model.forward(
-            input_dict,
-            compute_force=False,
-            compute_virials=False,
-            compute_stress=False,
-            compute_displacement=False,
-            training=self.training,
-        )
+        if comm_dict is None:
+            ret = self.model.forward(
+                input_dict,
+                compute_force=False,
+                compute_virials=False,
+                compute_stress=False,
+                compute_displacement=False,
+                training=self.training,
+            )
 
-        atom_energy_all = ret["node_energy"]
-        if atom_energy_all is None:
-            msg = "atom_energy is None"
-            raise ValueError(msg)
-        atom_energy_all = atom_energy_all.view(nf, nall)
-        atom_energy = atom_energy_all[:, :nloc]
+            atom_energy_all = ret["node_energy"]
+            if atom_energy_all is None:
+                msg = "atom_energy is None"
+                raise ValueError(msg)
+            atom_energy_all = atom_energy_all.view(nf, nall)
+            atom_energy = atom_energy_all[:, :nloc]
+        else:
+            atom_energy = self.forward_mace_with_comm(
+                nloc,
+                nall,
+                edge_index,
+                one_hot,
+                extended_coord_ff,
+                shifts,
+                comm_dict,
+            ).view(nf, nloc)
         energy = torch.sum(atom_energy, dim=1)
         grad_outputs = torch.jit.annotate(
             list[Optional[torch.Tensor]],
@@ -916,6 +947,139 @@ class MaceModel(BaseModel):
             "energy": atom_energy.view(nf, nloc, 1).to(extended_coord_.dtype),
             "energy_derv_c": atomic_virial.to(extended_coord_.dtype),
         }
+
+    def communicate_node_features(
+        self,
+        node_feats: torch.Tensor,
+        nloc: int,
+        nall: int,
+        comm_dict: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Communicate local node features to ghost slots using DeePMD border_op."""
+        node_feats = node_feats[:nloc]
+        n_padding = nall - nloc
+        if n_padding > 0:
+            node_feats = torch.nn.functional.pad(
+                node_feats,
+                (0, 0, 0, n_padding),
+                value=0.0,
+            )
+        ret = torch.ops.deepmd.border_op(
+            comm_dict["send_list"],
+            comm_dict["send_proc"],
+            comm_dict["recv_proc"],
+            comm_dict["send_num"],
+            comm_dict["recv_num"],
+            node_feats,
+            comm_dict["communicator"],
+            torch.tensor(
+                nloc,
+                dtype=torch.int32,
+                device=torch.device("cpu"),
+            ),
+            torch.tensor(
+                nall - nloc,
+                dtype=torch.int32,
+                device=torch.device("cpu"),
+            ),
+        )
+        return ret[0]
+
+    def forward_mace_with_comm(
+        self,
+        nloc: int,
+        nall: int,
+        edge_index: torch.Tensor,
+        node_attrs: torch.Tensor,
+        positions: torch.Tensor,
+        shifts: torch.Tensor,
+        comm_dict: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Evaluate MACE node energies with layer-wise MPI ghost communication."""
+        if positions.shape[0] != nall:
+            msg = "MACE comm_dict lower inference only supports one frame"
+            raise ValueError(msg)
+        vectors = positions[edge_index[1]] - positions[edge_index[0]] + shifts
+        lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
+        node_heads = torch.zeros(
+            (nall,),
+            dtype=torch.int64,
+            device=node_attrs.device,
+        )
+        num_atoms_arange = torch.arange(
+            nall,
+            dtype=torch.int64,
+            device=node_attrs.device,
+        )
+        node_e0 = self.model.atomic_energies_fn(node_attrs)[
+            num_atoms_arange,
+            node_heads,
+        ][:nloc]
+
+        node_feats = self.model.node_embedding(node_attrs)
+        edge_attrs = self.model.spherical_harmonics(vectors)
+        edge_feats, cutoff = self.model.radial_embedding(
+            lengths,
+            node_attrs,
+            edge_index,
+            self.model.atomic_numbers,
+        )
+
+        if hasattr(self.model, "pair_repulsion"):
+            pair_node_energy = self.model.pair_repulsion_fn(
+                lengths,
+                node_attrs,
+                edge_index,
+                self.model.atomic_numbers,
+            )[:nloc]
+        else:
+            pair_node_energy = torch.zeros_like(node_e0)
+
+        node_es_list = torch.jit.annotate(list[torch.Tensor], [pair_node_energy])
+        node_feats_list = torch.jit.annotate(list[torch.Tensor], [])
+
+        for i, (interaction, product) in enumerate(
+            zip(self.model.interactions, self.model.products),  # noqa: B905
+        ):
+            node_feats, sc = interaction(
+                node_attrs=node_attrs,
+                node_feats=node_feats,
+                edge_attrs=edge_attrs,
+                edge_feats=edge_feats,
+                edge_index=edge_index,
+                cutoff=cutoff,
+                first_layer=(i == 0),
+            )
+            node_feats = product(
+                node_feats=node_feats,
+                sc=sc,
+                node_attrs=node_attrs,
+            )
+            node_feats_list.append(node_feats[:nloc])
+            if i < self.num_interactions - 1:
+                node_feats = self.communicate_node_features(
+                    node_feats,
+                    nloc,
+                    nall,
+                    comm_dict,
+                )
+
+        for i, readout in enumerate(self.model.readouts):
+            feat_idx = -1 if len(self.model.readouts) == 1 else i
+            node_es_list.append(
+                readout(node_feats_list[feat_idx], node_heads[:nloc])[
+                    torch.arange(
+                        nloc,
+                        dtype=torch.int64,
+                        device=node_attrs.device,
+                    ),
+                    node_heads[:nloc],
+                ],
+            )
+
+        node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)
+        node_inter_es = self.model.scale_shift(node_inter_es, node_heads[:nloc])
+        return node_e0.clone().double() + node_inter_es.clone().double()
 
     def serialize(self) -> dict:
         """Serialize the model."""

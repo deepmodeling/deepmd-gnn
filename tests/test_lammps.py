@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 import numpy as np
 import pytest
@@ -32,10 +33,11 @@ SIX_ATOM_COORD = np.array(
 SIX_ATOM_TYPES = np.array([1, 1, 1, 2, 2, 2])
 
 
-def _missing_lammps(message: str) -> None:
+def _missing_lammps(message: str) -> NoReturn:
     if os.environ.get("DEEPMD_GNN_REQUIRE_LAMMPS") == "1":
         pytest.fail(message)
     pytest.skip(message)
+    raise RuntimeError(message)
 
 
 def _prepend_env_path(env: dict[str, str], name: str, *paths: Path | str) -> None:
@@ -81,6 +83,16 @@ def _ensure_lammps_available() -> None:
         _missing_lammps("Cannot find lmp executable or import lammps")
 
 
+def _ensure_mpi_lammps_available() -> tuple[str, str]:
+    mpi = shutil.which("mpirun") or shutil.which("mpiexec")
+    if mpi is None:
+        _missing_lammps("Cannot find mpirun or mpiexec")
+    lmp = shutil.which("lmp")
+    if lmp is None:
+        _missing_lammps("Cannot find MPI-capable lmp executable")
+    return mpi, lmp
+
+
 def _lammps_env() -> dict[str, str]:
     try:
         torch = importlib.import_module("torch")
@@ -100,6 +112,8 @@ def _lammps_env() -> dict[str, str]:
     env["LAMMPS_PLUGIN_PATH"] = str(deepmd_lib_dir)
     env["DP_PLUGIN_PATH"] = str(deepmd_gnn_plugin)
     env.setdefault("OMP_NUM_THREADS", "1")
+    env.setdefault("OMPI_ALLOW_RUN_AS_ROOT", "1")
+    env.setdefault("OMPI_ALLOW_RUN_AS_ROOT_CONFIRM", "1")
 
     if platform.system() == "Darwin":
         lib_env = "DYLD_FALLBACK_LIBRARY_PATH"
@@ -189,7 +203,13 @@ def _write_lammps_data(path: Path) -> None:
     )
 
 
-def _write_lammps_input(path: Path, data_file: Path, model_file: Path) -> None:
+def _write_lammps_input(
+    path: Path,
+    data_file: Path,
+    model_file: Path,
+    processors: str | None = None,
+) -> None:
+    processor_commands = [] if processors is None else [f"processors {processors}"]
     path.write_text(
         "\n".join(
             [
@@ -198,6 +218,7 @@ def _write_lammps_input(path: Path, data_file: Path, model_file: Path) -> None:
                 "atom_style atomic",
                 "neighbor 2.0 bin",
                 "neigh_modify every 1 delay 0 check yes",
+                *processor_commands,
                 f"read_data {data_file}",
                 f"pair_style deepmd {model_file}",
                 "pair_coeff * * O H",
@@ -245,6 +266,51 @@ def _run_lammps(input_file: Path, log_file: Path, env: dict[str, str]) -> None:
         os.environ.update(old_env)
 
 
+def _run_lammps_mpi(
+    input_file: Path,
+    log_file: Path,
+    env: dict[str, str],
+    *,
+    nprocs: int = 2,
+) -> None:
+    mpi, lmp = _ensure_mpi_lammps_available()
+    result = subprocess.run(
+        [
+            mpi,
+            "-np",
+            str(nprocs),
+            lmp,
+            "-in",
+            str(input_file),
+            "-log",
+            str(log_file),
+            "-screen",
+            "none",
+        ],
+        cwd=input_file.parent,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _read_step_zero_pe(log_file: Path) -> float:
+    log_text = log_file.read_text()
+    assert "Loop time" in log_text
+    thermo_match = re.search(
+        r"^\s*0\s+(-?\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?)",
+        log_text,
+        re.MULTILINE,
+    )
+    assert thermo_match is not None
+    pe = float(thermo_match.group(1))
+    assert np.isfinite(pe)
+    return pe
+
+
 @pytest.mark.lammps
 def test_lammps_runs_six_atom_mace_model(tmp_path: Path) -> None:
     """Run one LAMMPS step with a frozen MACE model through DeePMD-kit."""
@@ -260,12 +326,34 @@ def test_lammps_runs_six_atom_mace_model(tmp_path: Path) -> None:
     _write_lammps_input(input_file, data_file, model_file.resolve())
     _run_lammps(input_file, log_file, lammps_env)
 
-    log_text = log_file.read_text()
-    assert "Loop time" in log_text
-    thermo_match = re.search(
-        r"^\s*0\s+(-?\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?)",
-        log_text,
-        re.MULTILINE,
+    _read_step_zero_pe(log_file)
+
+
+@pytest.mark.lammps
+@pytest.mark.mpi
+def test_lammps_mpi_matches_single_rank_six_atom_mace_model(tmp_path: Path) -> None:
+    """Run frozen MACE through DeePMD-kit with two MPI ranks."""
+    _ensure_lammps_available()
+    _ensure_mpi_lammps_available()
+    lammps_env = _lammps_env()
+    model_file = _freeze_mace_model(tmp_path)
+
+    data_file = tmp_path / "water.lmp"
+    single_input = tmp_path / "in.single.lammps"
+    mpi_input = tmp_path / "in.mpi.lammps"
+    single_log = tmp_path / "log.single.lammps"
+    mpi_log = tmp_path / "log.mpi.lammps"
+
+    _write_lammps_data(data_file)
+    _write_lammps_input(single_input, data_file, model_file.resolve())
+    _write_lammps_input(mpi_input, data_file, model_file.resolve(), processors="2 1 1")
+
+    _run_lammps(single_input, single_log, lammps_env)
+    _run_lammps_mpi(mpi_input, mpi_log, lammps_env, nprocs=2)
+
+    np.testing.assert_allclose(
+        _read_step_zero_pe(mpi_log),
+        _read_step_zero_pe(single_log),
+        atol=1e-8,
+        rtol=0.0,
     )
-    assert thermo_match is not None
-    assert np.isfinite(float(thermo_match.group(1)))

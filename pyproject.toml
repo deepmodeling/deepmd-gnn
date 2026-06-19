@@ -66,6 +66,7 @@ docs = [
 markers = [
     "slow: tests that exercise real checkpoint downloads / conversions",
     "lammps: tests that require a LAMMPS executable or Python module",
+    "mpi: tests that require MPI executables",
 ]
 
 [tool.scikit-build]
