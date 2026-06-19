@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WATER_DATA = REPO_ROOT / "tests" / "data"
 MACE_INPUT = REPO_ROOT / "tests" / "mace.json"
