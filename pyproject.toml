@@ -65,6 +65,7 @@ docs = [
 [tool.pytest.ini_options]
 markers = [
     "slow: tests that exercise real checkpoint downloads / conversions",
+    "lammps: tests that require a LAMMPS executable or Python module",
 ]
 
 [tool.scikit-build]

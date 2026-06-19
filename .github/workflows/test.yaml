@@ -30,8 +30,28 @@ jobs:
       - name: Install dependencies
         run: uv pip install nox[uv]
       - name: Test with pytest
-        run: nox -db uv
+        run: nox -db uv -s tests
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v7
         with:
           use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
+  lammps:
+    name: Test LAMMPS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/requirements*.txt
+            **/pyproject.toml
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.12
+      - name: Install dependencies
+        run: uv pip install nox[uv]
+      - name: Test with LAMMPS
+        run: nox -db uv -s lammps
