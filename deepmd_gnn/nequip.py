@@ -2,7 +2,7 @@
 
 import importlib
 from copy import deepcopy
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from deepmd.dpmodel.output_def import (
@@ -628,7 +628,7 @@ class NequipModel(BaseModel):
         )
 
         compute_displacement = box is not None
-        displacement = torch.jit.annotate(Optional[torch.Tensor], None)
+        displacement = torch.jit.annotate(torch.Tensor | None, None)
         if box is not None:
             box_tensor = (
                 box.view(nf, 3, 3).to(default_dtype).to(extended_coord_ff.device)
