@@ -48,6 +48,7 @@ from e3nn.util.jit import (
 from nequip.model import model_from_config
 
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+from deepmd_gnn.op import edge_index as build_edge_index
 
 
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
@@ -571,10 +572,10 @@ class NequipModel(BaseModel):
 
         extended_coord_ff = extended_coord.view(nf * nall, 3)
         extended_atype_ff = extended_atype.view(nf * nall)
-        edge_index = torch.ops.deepmd_gnn.edge_index(
+        edge_index = build_edge_index(
             nlist,
             extended_atype,
-            torch.tensor(self.mm_types, dtype=torch.int64, device="cpu"),
+            torch.tensor(self.mm_types, dtype=torch.int64, device=extended_atype.device),
         )
         edge_index = edge_index.T
         # Nequip and MACE have different defination for edge_index
