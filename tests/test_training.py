@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from tests._pt_expt import (
-    register_pt_expt_plugin_for_cli,
+    pt_expt_cli_env,
 )
 
 
@@ -23,8 +23,9 @@ def _run_e2e_training(input_fn, backend_flag: str, model_fn: str) -> None:
         shutil.copytree(data_path, tmpdir / "data")
         # copy input.json to tmpdir
         shutil.copy(input_path, tmpdir / input_fn)
+        env = None
         if backend_flag == "--pt-expt":
-            register_pt_expt_plugin_for_cli(tmpdir)
+            env = pt_expt_cli_env(tmpdir)
 
         subprocess.check_call(
             [
@@ -36,6 +37,7 @@ def _run_e2e_training(input_fn, backend_flag: str, model_fn: str) -> None:
                 input_fn,
             ],
             cwd=tmpdir,
+            env=env,
         )
         subprocess.check_call(
             [
@@ -48,6 +50,7 @@ def _run_e2e_training(input_fn, backend_flag: str, model_fn: str) -> None:
                 model_fn,
             ],
             cwd=tmpdir,
+            env=env,
         )
         assert (tmpdir / model_fn).exists()
 

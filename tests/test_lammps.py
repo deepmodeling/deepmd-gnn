@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from tests._pt_expt import (
-    register_pt_expt_plugin_for_cli,
+    pt_expt_cli_env,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -156,11 +156,11 @@ def _freeze_mace_model(tmp_path: Path, backend_flag: str) -> Path:
     work_dir = tmp_path / "model"
     shutil.copytree(WATER_DATA, work_dir / "data")
     shutil.copy(MACE_INPUT, work_dir / "mace.json")
-    if backend_flag == "--pt-expt":
-        register_pt_expt_plugin_for_cli(work_dir)
 
     env = os.environ.copy()
     env.setdefault("OMP_NUM_THREADS", "1")
+    if backend_flag == "--pt-expt":
+        env = pt_expt_cli_env(work_dir, env)
     _run_command(
         [sys.executable, "-m", "deepmd", backend_flag, "train", "mace.json"],
         work_dir,
