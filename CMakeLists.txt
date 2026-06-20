@@ -33,10 +33,20 @@ if(NOT DEEPMD_GNN_WITH_CUDA MATCHES "^(AUTO|ON|OFF)$")
   message(FATAL_ERROR "DEEPMD_GNN_WITH_CUDA must be AUTO, ON, or OFF")
 endif()
 
-find_program(DEEPMD_GNN_NVCC_EXECUTABLE nvcc HINTS "$ENV{CUDA_HOME}/bin"
-                                                   "$ENV{CUDA_PATH}/bin")
+if(DEEPMD_GNN_WITH_CUDA STREQUAL "ON")
+  find_package(CUDAToolkit REQUIRED)
+elseif(DEEPMD_GNN_WITH_CUDA STREQUAL "AUTO")
+  find_package(CUDAToolkit QUIET)
+endif()
+
+if(CUDAToolkit_FOUND)
+  set(DEEPMD_GNN_NVCC_EXECUTABLE ${CUDAToolkit_NVCC_EXECUTABLE})
+else()
+  set(DEEPMD_GNN_NVCC_EXECUTABLE "DEEPMD_GNN_NVCC_EXECUTABLE-NOTFOUND")
+endif()
+
 if(DEEPMD_GNN_WITH_CUDA STREQUAL "AUTO")
-  if(DEEPMD_GNN_NVCC_EXECUTABLE)
+  if(CUDAToolkit_FOUND AND DEEPMD_GNN_NVCC_EXECUTABLE)
     set(DEEPMD_GNN_ENABLE_CUDA ON)
   else()
     set(DEEPMD_GNN_ENABLE_CUDA OFF)
@@ -46,11 +56,13 @@ else()
 endif()
 
 if(DEEPMD_GNN_ENABLE_CUDA)
-  if(NOT DEEPMD_GNN_NVCC_EXECUTABLE)
-    message(FATAL_ERROR "DEEPMD_GNN_WITH_CUDA=ON requires nvcc")
+  if(NOT CUDAToolkit_FOUND OR NOT DEEPMD_GNN_NVCC_EXECUTABLE)
+    message(FATAL_ERROR "DEEPMD_GNN_WITH_CUDA=ON requires CUDAToolkit/nvcc")
   endif()
   message(
-    STATUS "nvcc found at ${DEEPMD_GNN_NVCC_EXECUTABLE}; enabling CUDA OP")
+    STATUS
+      "Found CUDA in ${CUDAToolkit_BIN_DIR}; enabling CUDA OP with ${DEEPMD_GNN_NVCC_EXECUTABLE}"
+  )
   set(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
       OFF
       CACHE BOOL
@@ -59,9 +71,15 @@ if(DEEPMD_GNN_ENABLE_CUDA)
   set(DEEPMD_GNN_LINK_TORCH_CUDA
       ON
       CACHE BOOL "Link the OP against PyTorch CUDA libraries" FORCE)
+  if(NOT DEFINED CMAKE_CUDA_COMPILER)
+    set(CMAKE_CUDA_COMPILER ${DEEPMD_GNN_NVCC_EXECUTABLE})
+  endif()
+  if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
+    set(CMAKE_CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
+  endif()
   enable_language(CUDA)
 else()
-  message(STATUS "nvcc not found or CUDA disabled; building CPU-only OP")
+  message(STATUS "CUDAToolkit/nvcc not found or CUDA disabled; building CPU-only OP")
 endif()
 
 if(BUILD_CPP_IF
