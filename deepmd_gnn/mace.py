@@ -61,6 +61,16 @@ import deepmd_gnn.op  # noqa: F401
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
 from deepmd_gnn.edge import dense_edge_index
 
+
+def _pad_nlist_for_export(nlist: torch.Tensor) -> torch.Tensor:
+    pad = -torch.ones(
+        (*nlist.shape[:2], 1),
+        dtype=nlist.dtype,
+        device=nlist.device,
+    )
+    return torch.cat([nlist, pad], dim=-1)
+
+
 if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
 
     def border_op(
@@ -1262,6 +1272,7 @@ class MaceModel(BaseModel):
         ) -> dict[str, torch.Tensor]:
             torch._check(extended_coord.shape[1] >= 2)  # noqa: SLF001
             extended_coord = extended_coord.detach().requires_grad_(requires_grad=True)
+            nlist = _pad_nlist_for_export(nlist)
             return model.forward_common_lower(
                 extended_coord,
                 extended_atype,

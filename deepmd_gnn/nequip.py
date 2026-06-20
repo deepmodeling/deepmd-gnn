@@ -54,6 +54,15 @@ from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
 from deepmd_gnn.edge import dense_edge_index
 
 
+def _pad_nlist_for_export(nlist: torch.Tensor) -> torch.Tensor:
+    pad = -torch.ones(
+        (*nlist.shape[:2], 1),
+        dtype=nlist.dtype,
+        device=nlist.device,
+    )
+    return torch.cat([nlist, pad], dim=-1)
+
+
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
     try:
         stat_mod = importlib.import_module("deepmd.dpmodel.utils.stat")
@@ -884,6 +893,7 @@ class NequipModel(BaseModel):
             charge_spin: torch.Tensor | None,
         ) -> dict[str, torch.Tensor]:
             extended_coord = extended_coord.detach().requires_grad_(requires_grad=True)
+            nlist = _pad_nlist_for_export(nlist)
             return model.forward_common_lower(
                 extended_coord,
                 extended_atype,
