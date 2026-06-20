@@ -79,7 +79,8 @@ if(DEEPMD_GNN_ENABLE_CUDA)
   endif()
   enable_language(CUDA)
 else()
-  message(STATUS "CUDAToolkit/nvcc not found or CUDA disabled; building CPU-only OP")
+  message(
+    STATUS "CUDAToolkit/nvcc not found or CUDA disabled; building CPU-only OP")
 endif()
 
 if(BUILD_CPP_IF
