@@ -54,6 +54,8 @@ jobs:
           uv pip install numpy "deepmd-kit[torch,lmp,cpu]>=3.0.0b2" mpi4py mpich
           CMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')
           CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" uv pip install -e .[test]
+        env:
+          CMAKE_ARGS: -DDEEPMD_GNN_WITH_CUDA=ON
       - name: Check CUDA availability
         run: |
           python - <<'PY'

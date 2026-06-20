@@ -13,6 +13,7 @@ endmacro()
 option(BUILD_CPP_IF "Build C++ interfaces" ON)
 option(BUILD_PY_IF "Build Python interfaces" OFF)
 option(USE_PT_PYTHON_LIBS "Use PyTorch Python libraries" OFF)
+option(DEEPMD_GNN_WITH_CUDA "Build CUDA implementation of deepmd-gnn OPs" OFF)
 option(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
        "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable" ON)
 option(DEEPMD_GNN_LINK_TORCH_CUDA "Link the OP against PyTorch CUDA libraries"
@@ -21,6 +22,17 @@ option(DEEPMD_GNN_LINK_TORCH_CUDA "Link the OP against PyTorch CUDA libraries"
 if((NOT BUILD_PY_IF) AND (NOT BUILD_CPP_IF))
   # nothing to do
   message(FATAL_ERROR "Nothing to build.")
+endif()
+
+if(DEEPMD_GNN_WITH_CUDA)
+  set(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
+      OFF
+      CACHE BOOL "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable"
+            FORCE)
+  set(DEEPMD_GNN_LINK_TORCH_CUDA
+      ON
+      CACHE BOOL "Link the OP against PyTorch CUDA libraries" FORCE)
+  enable_language(CUDA)
 endif()
 
 if(BUILD_CPP_IF
