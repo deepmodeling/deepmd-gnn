@@ -62,10 +62,7 @@ jobs:
           fi
       - name: Install dependencies
         run: |
-          uv pip install numpy "deepmd-kit[torch,lmp,cpu]>=3.0.0b2" mpi4py mpich
-          CMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')
-          CMAKE_ARGS="-DDEEPMD_GNN_WITH_CUDA=ON -DCUDAToolkit_ROOT=${CUDA_PATH:-/usr/local/cuda}" \
-            CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" uv pip install -e .[test]
+          uv pip install -e .[test] "deepmd-kit[torch,lmp,cpu]>=3.0.0" mpi4py mpich
       - name: Check CUDA availability
         run: |
           python - <<'PY'
