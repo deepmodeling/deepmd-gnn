@@ -1,0 +1,89 @@
+name: Test CUDA
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types:
+      - labeled
+      - opened
+      - reopened
+      - synchronize
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_SYSTEM_PYTHON: 1
+
+jobs:
+  test_cuda:
+    name: Test Python package on CUDA
+    runs-on: gpu
+    if: >-
+      github.repository_owner == 'deepmodeling' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'merge_group' ||
+        github.event_name == 'pull_request' && github.event.label && github.event.label.name == 'Test CUDA'
+      )
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/requirements*.txt
+            **/pyproject.toml
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+      - name: Install dependencies
+        run: |
+          uv pip install numpy "deepmd-kit[torch,lmp,cpu]>=3.0.0b2" mpi4py mpich
+          CMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')
+          CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" uv pip install -e .[test]
+      - name: Check CUDA availability
+        run: |
+          python - <<'PY'
+          import torch
+          print(f"torch: {torch.__version__}")
+          print(f"cuda available: {torch.cuda.is_available()}")
+          if not torch.cuda.is_available():
+              raise SystemExit("CUDA is unavailable on the GPU runner")
+          print(f"cuda device: {torch.cuda.get_device_name(0)}")
+          PY
+        env:
+          CUDA_VISIBLE_DEVICES: 0
+      - name: Test Python package on CUDA
+        run: python -m pytest tests
+        env:
+          CUDA_VISIBLE_DEVICES: 0
+      - name: Test LAMMPS on CUDA
+        run: python -m pytest -m lammps tests/test_lammps.py
+        env:
+          CUDA_VISIBLE_DEVICES: 0
+          DEEPMD_GNN_REQUIRE_LAMMPS: 1
+
+  pass:
+    name: Pass testing on CUDA
+    needs: [test_cuda]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
+          allowed-skips: test_cuda

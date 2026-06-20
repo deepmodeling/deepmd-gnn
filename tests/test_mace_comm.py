@@ -48,14 +48,17 @@ def test_mace_comm_branch_matches_regular_lower_without_ghosts(monkeypatch) -> N
 
     torch.manual_seed(20240823)
     model = MaceModel(type_map=["O", "H"], sel=4, r_max=5.0, precision="float64")
+    device = next(model.parameters()).device
     coord = torch.tensor(
         [[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]],
         dtype=torch.float64,
+        device=device,
     )
-    atype = torch.tensor([[0, 1, 1]], dtype=torch.int64)
+    atype = torch.tensor([[0, 1, 1]], dtype=torch.int64, device=device)
     nlist = torch.tensor(
         [[[1, 2, -1, -1], [0, 2, -1, -1], [0, 1, -1, -1]]],
         dtype=torch.int64,
+        device=device,
     )
 
     regular = model.forward_lower(coord, atype, nlist)
