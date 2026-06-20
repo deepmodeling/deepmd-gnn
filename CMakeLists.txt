@@ -13,7 +13,10 @@ endmacro()
 option(BUILD_CPP_IF "Build C++ interfaces" ON)
 option(BUILD_PY_IF "Build Python interfaces" OFF)
 option(USE_PT_PYTHON_LIBS "Use PyTorch Python libraries" OFF)
-option(DEEPMD_GNN_WITH_CUDA "Build CUDA implementation of deepmd-gnn OPs" OFF)
+set(DEEPMD_GNN_WITH_CUDA
+    "AUTO"
+    CACHE STRING "Build CUDA implementation of deepmd-gnn OPs: AUTO, ON, or OFF")
+set_property(CACHE DEEPMD_GNN_WITH_CUDA PROPERTY STRINGS AUTO ON OFF)
 option(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
        "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable" ON)
 option(DEEPMD_GNN_LINK_TORCH_CUDA "Link the OP against PyTorch CUDA libraries"
@@ -24,7 +27,28 @@ if((NOT BUILD_PY_IF) AND (NOT BUILD_CPP_IF))
   message(FATAL_ERROR "Nothing to build.")
 endif()
 
-if(DEEPMD_GNN_WITH_CUDA)
+string(TOUPPER "${DEEPMD_GNN_WITH_CUDA}" DEEPMD_GNN_WITH_CUDA)
+if(NOT DEEPMD_GNN_WITH_CUDA MATCHES "^(AUTO|ON|OFF)$")
+  message(FATAL_ERROR "DEEPMD_GNN_WITH_CUDA must be AUTO, ON, or OFF")
+endif()
+
+find_program(DEEPMD_GNN_NVCC_EXECUTABLE nvcc HINTS "$ENV{CUDA_HOME}/bin"
+                                                   "$ENV{CUDA_PATH}/bin")
+if(DEEPMD_GNN_WITH_CUDA STREQUAL "AUTO")
+  if(DEEPMD_GNN_NVCC_EXECUTABLE)
+    set(DEEPMD_GNN_ENABLE_CUDA ON)
+  else()
+    set(DEEPMD_GNN_ENABLE_CUDA OFF)
+  endif()
+else()
+  set(DEEPMD_GNN_ENABLE_CUDA ${DEEPMD_GNN_WITH_CUDA})
+endif()
+
+if(DEEPMD_GNN_ENABLE_CUDA)
+  if(NOT DEEPMD_GNN_NVCC_EXECUTABLE)
+    message(FATAL_ERROR "DEEPMD_GNN_WITH_CUDA=ON requires nvcc")
+  endif()
+  message(STATUS "nvcc found at ${DEEPMD_GNN_NVCC_EXECUTABLE}; enabling CUDA OP")
   set(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
       OFF
       CACHE BOOL
@@ -34,6 +58,8 @@ if(DEEPMD_GNN_WITH_CUDA)
       ON
       CACHE BOOL "Link the OP against PyTorch CUDA libraries" FORCE)
   enable_language(CUDA)
+else()
+  message(STATUS "nvcc not found or CUDA disabled; building CPU-only OP")
 endif()
 
 if(BUILD_CPP_IF
@@ -63,8 +89,6 @@ if(BUILD_CPP_IF
 endif()
 
 if(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK)
-  find_program(DEEPMD_GNN_NVCC_EXECUTABLE nvcc HINTS "$ENV{CUDA_HOME}/bin"
-                                                     "$ENV{CUDA_PATH}/bin")
   if(NOT DEEPMD_GNN_NVCC_EXECUTABLE AND NOT TARGET torch::cudart)
     message(
       STATUS

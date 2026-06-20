@@ -1,6 +1,6 @@
 set(OP_SRC edge_index.cc)
 
-if(DEEPMD_GNN_WITH_CUDA)
+if(DEEPMD_GNN_ENABLE_CUDA)
   list(APPEND OP_SRC edge_index_cuda.cu)
 endif()
 
@@ -11,7 +11,7 @@ if(TORCH_CXX_FLAGS)
                      "${TORCH_CXX_FLAGS}")
   target_compile_options(deepmd_gnn PRIVATE ${DEEPMD_GNN_TORCH_CXX_FLAGS})
 endif()
-if(DEEPMD_GNN_WITH_CUDA)
+if(DEEPMD_GNN_ENABLE_CUDA)
   target_compile_definitions(deepmd_gnn PRIVATE DEEPMD_GNN_WITH_CUDA)
   set_target_properties(deepmd_gnn PROPERTIES CUDA_STANDARD 17)
 endif()
