@@ -18,7 +18,6 @@ import pytest
 
 from tests._pt_expt import (
     register_pt_expt_plugin_for_cli,
-    require_deepmd_kit_pt2_support,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -153,14 +152,7 @@ def _run_command(command: list[str], cwd: Path, env: dict[str, str]) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _require_model_backend(backend_flag: str) -> None:
-    if backend_flag == "--pt-expt":
-        require_deepmd_kit_pt2_support()
-
-
 def _freeze_mace_model(tmp_path: Path, backend_flag: str) -> Path:
-    _require_model_backend(backend_flag)
-
     work_dir = tmp_path / "model"
     shutil.copytree(WATER_DATA, work_dir / "data")
     shutil.copy(MACE_INPUT, work_dir / "mace.json")
@@ -338,7 +330,6 @@ def test_lammps_runs_six_atom_mace_model(
     backend_flag: str,
 ) -> None:
     """Run one LAMMPS step with a frozen MACE model through DeePMD-kit."""
-    _require_model_backend(backend_flag)
     _ensure_lammps_available()
     lammps_env = _lammps_env()
     model_file = _freeze_mace_model(tmp_path, backend_flag)
@@ -362,7 +353,6 @@ def test_lammps_mpi_matches_single_rank_six_atom_mace_model(
     backend_flag: str,
 ) -> None:
     """Run frozen MACE through DeePMD-kit with two MPI ranks."""
-    _require_model_backend(backend_flag)
     _ensure_lammps_available()
     _ensure_mpi_lammps_available()
     lammps_env = _lammps_env()

@@ -10,7 +10,6 @@ import pytest
 
 from tests._pt_expt import (
     register_pt_expt_plugin_for_cli,
-    require_deepmd_kit_pt2_support,
 )
 
 
@@ -74,5 +73,4 @@ def test_e2e_training(input_fn) -> None:
 )
 def test_e2e_pt_expt_training_exports_pt2(input_fn) -> None:
     """Test training and freezing exportable models for LAMMPS."""
-    require_deepmd_kit_pt2_support()
     _run_e2e_training(input_fn, "--pt-expt", "model.pt2")
