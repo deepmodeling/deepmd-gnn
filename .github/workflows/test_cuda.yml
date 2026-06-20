@@ -71,7 +71,8 @@ jobs:
             pytest \
             pytest-cov \
             mpi4py \
-            mpich
+            mpich \
+            --torch-backend auto
           CMAKE_PREFIX_PATH="$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')" uv pip install --no-deps -e .
       - name: Check CUDA availability
         run: |
