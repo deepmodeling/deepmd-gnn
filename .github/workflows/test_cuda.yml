@@ -62,7 +62,7 @@ jobs:
           fi
       - name: Install dependencies
         run: |
-          uv pip install -e .[test] "deepmd-kit[torch,lmp,cpu]>=3.0.0" mpi4py mpich
+          uv pip install -e .[test] "deepmd-kit[torch,lmp,cpu]>=3.2.0b0" mpi4py mpich
       - name: Check CUDA availability
         run: |
           python - <<'PY'

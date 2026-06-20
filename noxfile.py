@@ -26,7 +26,7 @@ def tests(session: nox.Session) -> None:
     """Run test suite with pytest."""
     session.install(
         "numpy",
-        "deepmd-kit[torch]>=3.0.0b2",
+        "deepmd-kit[torch]>=3.2.0b0",
         "--extra-index-url",
         PYTORCH_CPU_INDEX_URL,
     )
@@ -48,7 +48,7 @@ def lammps(session: nox.Session) -> None:
     """Run LAMMPS integration tests."""
     session.install(
         "numpy",
-        "deepmd-kit[torch,lmp,cpu]>=3.0.0",
+        "deepmd-kit[torch,lmp,cpu]>=3.2.0b0",
         "mpi4py",
         "mpich",
         "--extra-index-url",

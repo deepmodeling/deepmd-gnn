@@ -16,9 +16,18 @@ from typing import NoReturn
 import numpy as np
 import pytest
 
+from tests._pt_expt import (
+    register_pt_expt_plugin_for_cli,
+    require_deepmd_kit_pt2_support,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WATER_DATA = REPO_ROOT / "tests" / "data"
 MACE_INPUT = REPO_ROOT / "tests" / "mace.json"
+MODEL_BACKENDS = [
+    pytest.param("--pt", id="pt"),
+    pytest.param("--pt-expt", id="pt-expt"),
+]
 SIX_ATOM_BOX = np.array([0.0, 13.0, 0.0, 13.0, 0.0, 13.0, 0.0, 0.0, 0.0])
 SIX_ATOM_COORD = np.array(
     [
@@ -144,22 +153,33 @@ def _run_command(command: list[str], cwd: Path, env: dict[str, str]) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _freeze_mace_model(tmp_path: Path) -> Path:
+def _require_model_backend(backend_flag: str) -> None:
+    if backend_flag == "--pt-expt":
+        require_deepmd_kit_pt2_support()
+
+
+def _freeze_mace_model(tmp_path: Path, backend_flag: str) -> Path:
+    _require_model_backend(backend_flag)
+
     work_dir = tmp_path / "model"
     shutil.copytree(WATER_DATA, work_dir / "data")
     shutil.copy(MACE_INPUT, work_dir / "mace.json")
+    if backend_flag == "--pt-expt":
+        register_pt_expt_plugin_for_cli(work_dir)
 
     env = os.environ.copy()
     env.setdefault("OMP_NUM_THREADS", "1")
     _run_command(
-        [sys.executable, "-m", "deepmd", "--pt", "train", "mace.json"],
+        [sys.executable, "-m", "deepmd", backend_flag, "train", "mace.json"],
         work_dir,
         env,
     )
 
-    model_file = work_dir / "model.pth"
+    model_file = work_dir / (
+        "model.pt2" if backend_flag == "--pt-expt" else "model.pth"
+    )
     _run_command(
-        [sys.executable, "-m", "deepmd", "--pt", "freeze", "-o", str(model_file)],
+        [sys.executable, "-m", "deepmd", backend_flag, "freeze", "-o", str(model_file)],
         work_dir,
         env,
     )
@@ -312,11 +332,16 @@ def _read_step_zero_pe(log_file: Path) -> float:
 
 
 @pytest.mark.lammps
-def test_lammps_runs_six_atom_mace_model(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend_flag", MODEL_BACKENDS)
+def test_lammps_runs_six_atom_mace_model(
+    tmp_path: Path,
+    backend_flag: str,
+) -> None:
     """Run one LAMMPS step with a frozen MACE model through DeePMD-kit."""
+    _require_model_backend(backend_flag)
     _ensure_lammps_available()
     lammps_env = _lammps_env()
-    model_file = _freeze_mace_model(tmp_path)
+    model_file = _freeze_mace_model(tmp_path, backend_flag)
 
     data_file = tmp_path / "water.lmp"
     input_file = tmp_path / "in.lammps"
@@ -331,12 +356,17 @@ def test_lammps_runs_six_atom_mace_model(tmp_path: Path) -> None:
 
 @pytest.mark.lammps
 @pytest.mark.mpi
-def test_lammps_mpi_matches_single_rank_six_atom_mace_model(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend_flag", MODEL_BACKENDS)
+def test_lammps_mpi_matches_single_rank_six_atom_mace_model(
+    tmp_path: Path,
+    backend_flag: str,
+) -> None:
     """Run frozen MACE through DeePMD-kit with two MPI ranks."""
+    _require_model_backend(backend_flag)
     _ensure_lammps_available()
     _ensure_mpi_lammps_available()
     lammps_env = _lammps_env()
-    model_file = _freeze_mace_model(tmp_path)
+    model_file = _freeze_mace_model(tmp_path, backend_flag)
 
     data_file = tmp_path / "water.lmp"
     single_input = tmp_path / "in.single.lammps"
