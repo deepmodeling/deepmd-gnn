@@ -136,16 +136,15 @@ ts::Tensor edge_index_cuda_kernel(const ts::Tensor& nlist_tensor,
   const EdgeIndexShape shape = validate_shape(nlist_tensor_, atype_tensor_);
   const int64_t nmm = mm_tensor_.size(0);
   const int64_t max_edge_size = shape.nf * shape.nloc * shape.nnei;
-  ts::Tensor edge_index_tensor =
-      ts::empty({max_edge_size, 2}, th::ScalarType::Long, th::Layout::Strided,
-                device);
+  ts::Tensor edge_index_tensor = ts::empty(
+      {max_edge_size, 2}, th::ScalarType::Long, th::Layout::Strided, device);
 
-  const int64_t edge_size = edge_index_cuda(
-      nlist_tensor_.const_data_ptr<int64_t>(),
-      atype_tensor_.const_data_ptr<int64_t>(),
-      mm_tensor_.const_data_ptr<int64_t>(),
-      edge_index_tensor.mutable_data_ptr<int64_t>(), shape.nf, shape.nloc,
-      shape.nnei, shape.nall, nmm, device.index());
+  const int64_t edge_size =
+      edge_index_cuda(nlist_tensor_.const_data_ptr<int64_t>(),
+                      atype_tensor_.const_data_ptr<int64_t>(),
+                      mm_tensor_.const_data_ptr<int64_t>(),
+                      edge_index_tensor.mutable_data_ptr<int64_t>(), shape.nf,
+                      shape.nloc, shape.nnei, shape.nall, nmm, device.index());
   return ts::narrow(edge_index_tensor, 0, 0, edge_size);
 }
 #endif

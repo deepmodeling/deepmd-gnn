@@ -27,7 +27,8 @@ endif()
 if(DEEPMD_GNN_WITH_CUDA)
   set(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
       OFF
-      CACHE BOOL "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable"
+      CACHE BOOL
+            "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable"
             FORCE)
   set(DEEPMD_GNN_LINK_TORCH_CUDA
       ON

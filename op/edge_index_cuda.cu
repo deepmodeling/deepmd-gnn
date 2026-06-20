@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-#include "edge_index_cuda.h"
-
 #include <cuda_runtime.h>
 #include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
@@ -9,6 +7,8 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+
+#include "edge_index_cuda.h"
 
 namespace {
 
@@ -142,8 +142,8 @@ int64_t edge_index_cuda(const int64_t* nlist,
   DeviceBuffer prefix(total_slots);
 
   constexpr int threads = 256;
-  const auto blocks = static_cast<unsigned int>((total_slots + threads - 1) /
-                                                threads);
+  const auto blocks =
+      static_cast<unsigned int>((total_slots + threads - 1) / threads);
   mark_edges_kernel<<<blocks, threads>>>(nlist, atype, mm, flags.ptr,
                                          total_slots, nloc, nnei, nall, nmm);
   check_cuda(cudaGetLastError(), "mark_edges_kernel launch");
