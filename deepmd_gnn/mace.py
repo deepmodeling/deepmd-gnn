@@ -726,9 +726,9 @@ class MaceModel(BaseModel):
         mapping: Optional[torch.Tensor] = None,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
-        charge_spin: Optional[torch.Tensor] = None,
         do_atomic_virial: bool = False,
         comm_dict: Optional[dict[str, torch.Tensor]] = None,
+        charge_spin: Optional[torch.Tensor] = None,
     ) -> dict[str, torch.Tensor]:
         """Forward lower pass of the model.
 

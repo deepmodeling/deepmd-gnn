@@ -228,6 +228,7 @@ def _write_lammps_input(
                 "units metal",
                 "boundary p p p",
                 "atom_style atomic",
+                "atom_modify map yes",
                 "neighbor 2.0 bin",
                 "neigh_modify every 1 delay 0 check yes",
                 *processor_commands,
