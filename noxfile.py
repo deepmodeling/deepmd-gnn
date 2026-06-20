@@ -7,6 +7,29 @@ import nox
 nox.options.sessions = ["tests"]
 
 PYTORCH_CPU_INDEX_URL = "https://download.pytorch.org/whl/cpu"
+# MACE pins e3nn 0.4.4, while deepmd-kit 3.2 declares e3nn>=0.5.9.
+MACE_E3NN = "e3nn==0.4.4"
+PROJECT_RUNTIME_DEPS = [
+    "mace-torch>=0.3.5",
+    "nequip",
+    MACE_E3NN,
+    "dargs",
+]
+PROJECT_TEST_DEPS = [
+    "pytest",
+    "pytest-cov",
+    "dargs>=0.4.8",
+]
+
+
+def install_project_deps(session: nox.Session) -> None:
+    """Install project dependencies without re-solving deepmd-kit."""
+    session.install(
+        *PROJECT_RUNTIME_DEPS,
+        *PROJECT_TEST_DEPS,
+        "--extra-index-url",
+        PYTORCH_CPU_INDEX_URL,
+    )
 
 
 def install_editable(session: nox.Session) -> None:
@@ -19,8 +42,8 @@ def install_editable(session: nox.Session) -> None:
     ).strip()
     session.log(f"{cmake_prefix_path=}")
     session.install(
-        "-e.[test]",
-        "deepmd-kit[torch]>=3.2.0b0",
+        "--no-deps",
+        "-e.",
         env={"CMAKE_PREFIX_PATH": cmake_prefix_path},
     )
 
@@ -34,6 +57,7 @@ def tests(session: nox.Session) -> None:
         "--extra-index-url",
         PYTORCH_CPU_INDEX_URL,
     )
+    install_project_deps(session)
     install_editable(session)
     session.run(
         "pytest",
@@ -58,6 +82,7 @@ def lammps(session: nox.Session) -> None:
         "--extra-index-url",
         PYTORCH_CPU_INDEX_URL,
     )
+    install_project_deps(session)
     install_editable(session)
     session.run(
         "pytest",
