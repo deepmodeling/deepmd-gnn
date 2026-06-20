@@ -18,7 +18,11 @@ def install_editable(session: nox.Session) -> None:
         silent=True,
     ).strip()
     session.log(f"{cmake_prefix_path=}")
-    session.install("-e.[test]", env={"CMAKE_PREFIX_PATH": cmake_prefix_path})
+    session.install(
+        "-e.[test]",
+        "deepmd-kit[torch]>=3.2.0b0",
+        env={"CMAKE_PREFIX_PATH": cmake_prefix_path},
+    )
 
 
 @nox.session
