@@ -243,6 +243,24 @@ def _write_lammps_input(
     )
 
 
+def _lammps_failure_message(
+    result: subprocess.CompletedProcess[str],
+    log_file: Path,
+) -> str:
+    log_text = log_file.read_text() if log_file.exists() else "<missing log file>"
+    return "\n".join(
+        [
+            f"LAMMPS exited with status {result.returncode}",
+            "=== stdout ===",
+            result.stdout,
+            "=== stderr ===",
+            result.stderr,
+            f"=== {log_file.name} ===",
+            log_text,
+        ],
+    )
+
+
 def _run_lammps(input_file: Path, log_file: Path, env: dict[str, str]) -> None:
     lmp = shutil.which("lmp") or shutil.which("lmp_serial")
     if lmp is not None:
@@ -255,7 +273,7 @@ def _run_lammps(input_file: Path, log_file: Path, env: dict[str, str]) -> None:
             timeout=120,
             check=False,
         )
-        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.returncode == 0, _lammps_failure_message(result, log_file)
         return
 
     try:
@@ -306,7 +324,7 @@ def _run_lammps_mpi(
         timeout=180,
         check=False,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 0, _lammps_failure_message(result, log_file)
 
 
 def _read_step_zero_pe(log_file: Path) -> float:
