@@ -62,8 +62,16 @@ jobs:
           fi
       - name: Install dependencies
         run: |
-          uv pip install "deepmd-kit[torch,lmp,cpu]>=3.2.0b0" mpi4py mpich
-          uv pip install "mace-torch>=0.3.5" nequip "e3nn==0.4.4" dargs pytest pytest-cov
+          uv pip install --overrides requirements-overrides.txt \
+            "deepmd-kit[torch,lmp,cpu]>=3.2.0b0" \
+            "mace-torch>=0.3.5" \
+            nequip \
+            "e3nn==0.4.4" \
+            dargs \
+            pytest \
+            pytest-cov \
+            mpi4py \
+            mpich
           CMAKE_PREFIX_PATH="$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')" uv pip install --no-deps -e .
       - name: Check CUDA availability
         run: |
