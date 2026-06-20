@@ -31,7 +31,9 @@ def test_mace_pt_expt_export_handles_dynamic_nloc(tmp_path) -> None:
     """Exported MACE graph keeps atom-count dimensions dynamic after save/load."""
     model = MaceModel(type_map=["O", "H"], r_max=6.0, sel=116, hidden_irreps="16x0e")
     sample_inputs = _make_sample_inputs(model, nframes=2, nloc=2)
-    extended_coord, extended_atype, nlist, mapping, fparam, aparam = sample_inputs
+    extended_coord, extended_atype, nlist, mapping, fparam, aparam, charge_spin = (
+        sample_inputs
+    )
     traced = model.forward_common_lower_exportable(
         extended_coord,
         extended_atype,
@@ -39,6 +41,7 @@ def test_mace_pt_expt_export_handles_dynamic_nloc(tmp_path) -> None:
         mapping,
         fparam,
         aparam,
+        charge_spin,
         do_atomic_virial=True,
         tracing_mode="symbolic",
         _allow_non_fake_inputs=True,

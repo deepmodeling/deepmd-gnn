@@ -572,9 +572,37 @@ class MaceModel(BaseModel):
         return 0
 
     @torch.jit.export
+    def has_default_fparam(self) -> bool:
+        """Return whether default frame parameters are available."""
+        return False
+
+    def get_default_fparam(self) -> Optional[torch.Tensor]:
+        """Get the default frame parameters."""
+        return None
+
+    @torch.jit.export
     def get_dim_aparam(self) -> int:
         """Get the number (dimension) of atomic parameters of this atomic model."""
         return 0
+
+    @torch.jit.export
+    def has_chg_spin_ebd(self) -> bool:
+        """Return whether charge-spin embedding is enabled."""
+        return False
+
+    @torch.jit.export
+    def get_dim_chg_spin(self) -> int:
+        """Get the dimension of charge-spin input."""
+        return 0
+
+    @torch.jit.export
+    def has_default_chg_spin(self) -> bool:
+        """Return whether default charge-spin values are available."""
+        return False
+
+    def get_default_chg_spin(self) -> Optional[torch.Tensor]:
+        """Get the default charge-spin values."""
+        return None
 
     @torch.jit.export
     def get_sel_type(self) -> list[int]:
@@ -696,6 +724,7 @@ class MaceModel(BaseModel):
         mapping: Optional[torch.Tensor] = None,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
+        charge_spin: Optional[torch.Tensor] = None,
         do_atomic_virial: bool = False,
         comm_dict: Optional[dict[str, torch.Tensor]] = None,
     ) -> dict[str, torch.Tensor]:
@@ -720,6 +749,9 @@ class MaceModel(BaseModel):
         comm_dict : dict[str, torch.Tensor], optional
             The communication dictionary.
         """
+        if charge_spin is not None:
+            msg = "charge_spin is unsupported"
+            raise ValueError(msg)
         nloc = nlist.shape[1]
         _nf, nall = extended_atype.shape
         # calculate nlist for ghost atoms, as LAMMPS does not calculate it
@@ -1162,9 +1194,13 @@ class MaceModel(BaseModel):
         mapping: Optional[torch.Tensor] = None,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
+        charge_spin: Optional[torch.Tensor] = None,
         do_atomic_virial: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Forward lower pass with internal DeePMD output names."""
+        if charge_spin is not None:
+            msg = "charge_spin is unsupported"
+            raise ValueError(msg)
         return self.forward_lower_common(
             nlist.shape[1],
             extended_coord,
@@ -1185,6 +1221,7 @@ class MaceModel(BaseModel):
         mapping: Optional[torch.Tensor] = None,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
+        charge_spin: Optional[torch.Tensor] = None,
         do_atomic_virial: bool = False,
         **make_fx_kwargs: object,
     ) -> torch.nn.Module:
@@ -1223,6 +1260,7 @@ class MaceModel(BaseModel):
             mapping: Optional[torch.Tensor],
             fparam: Optional[torch.Tensor],
             aparam: Optional[torch.Tensor],
+            charge_spin: Optional[torch.Tensor],
         ) -> dict[str, torch.Tensor]:
             torch._check(extended_coord.shape[1] >= 2)  # noqa: SLF001
             extended_coord = extended_coord.detach().requires_grad_(requires_grad=True)
@@ -1233,6 +1271,7 @@ class MaceModel(BaseModel):
                 mapping=mapping,
                 fparam=fparam,
                 aparam=aparam,
+                charge_spin=charge_spin,
                 do_atomic_virial=do_atomic_virial,
             )
 
@@ -1246,6 +1285,7 @@ class MaceModel(BaseModel):
                 mapping,
                 fparam,
                 aparam,
+                charge_spin,
             )
             _clear_export_guards_once(traced)
             return traced

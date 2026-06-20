@@ -349,9 +349,37 @@ class NequipModel(BaseModel):
         return 0
 
     @torch.jit.export
+    def has_default_fparam(self) -> bool:
+        """Return whether default frame parameters are available."""
+        return False
+
+    def get_default_fparam(self) -> torch.Tensor | None:
+        """Get the default frame parameters."""
+        return None
+
+    @torch.jit.export
     def get_dim_aparam(self) -> int:
         """Get the number (dimension) of atomic parameters of this atomic model."""
         return 0
+
+    @torch.jit.export
+    def has_chg_spin_ebd(self) -> bool:
+        """Return whether charge-spin embedding is enabled."""
+        return False
+
+    @torch.jit.export
+    def get_dim_chg_spin(self) -> int:
+        """Get the dimension of charge-spin input."""
+        return 0
+
+    @torch.jit.export
+    def has_default_chg_spin(self) -> bool:
+        """Return whether default charge-spin values are available."""
+        return False
+
+    def get_default_chg_spin(self) -> torch.Tensor | None:
+        """Get the default charge-spin values."""
+        return None
 
     @torch.jit.export
     def get_sel_type(self) -> list[int]:
@@ -468,6 +496,7 @@ class NequipModel(BaseModel):
         mapping: torch.Tensor | None = None,
         fparam: torch.Tensor | None = None,
         aparam: torch.Tensor | None = None,
+        charge_spin: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
         comm_dict: dict[str, torch.Tensor] | None = None,
     ) -> dict[str, torch.Tensor]:
@@ -492,6 +521,9 @@ class NequipModel(BaseModel):
         comm_dict : dict[str, torch.Tensor], optional
             The communication dictionary.
         """
+        if charge_spin is not None:
+            msg = "charge_spin is unsupported"
+            raise ValueError(msg)
         nloc = nlist.shape[1]
         nf, nall = extended_atype.shape
         # recalculate nlist for ghost atoms
@@ -806,9 +838,13 @@ class NequipModel(BaseModel):
         mapping: torch.Tensor | None = None,
         fparam: torch.Tensor | None = None,
         aparam: torch.Tensor | None = None,
+        charge_spin: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Forward lower pass with internal DeePMD output names."""
+        if charge_spin is not None:
+            msg = "charge_spin is unsupported"
+            raise ValueError(msg)
         return self.forward_lower_common(
             nlist.shape[1],
             extended_coord,
@@ -829,6 +865,7 @@ class NequipModel(BaseModel):
         mapping: torch.Tensor | None = None,
         fparam: torch.Tensor | None = None,
         aparam: torch.Tensor | None = None,
+        charge_spin: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
         **make_fx_kwargs: object,
     ) -> torch.nn.Module:
@@ -846,6 +883,7 @@ class NequipModel(BaseModel):
             mapping: torch.Tensor | None,
             fparam: torch.Tensor | None,
             aparam: torch.Tensor | None,
+            charge_spin: torch.Tensor | None,
         ) -> dict[str, torch.Tensor]:
             extended_coord = extended_coord.detach().requires_grad_(requires_grad=True)
             return model.forward_common_lower(
@@ -855,6 +893,7 @@ class NequipModel(BaseModel):
                 mapping=mapping,
                 fparam=fparam,
                 aparam=aparam,
+                charge_spin=charge_spin,
                 do_atomic_virial=do_atomic_virial,
             )
 
@@ -867,6 +906,7 @@ class NequipModel(BaseModel):
                 mapping,
                 fparam,
                 aparam,
+                charge_spin,
             )
         finally:
             self._use_exportable_edge_index = False
