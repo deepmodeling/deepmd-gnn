@@ -15,7 +15,8 @@ option(BUILD_PY_IF "Build Python interfaces" OFF)
 option(USE_PT_PYTHON_LIBS "Use PyTorch Python libraries" OFF)
 set(DEEPMD_GNN_WITH_CUDA
     "AUTO"
-    CACHE STRING "Build CUDA implementation of deepmd-gnn OPs: AUTO, ON, or OFF")
+    CACHE STRING
+          "Build CUDA implementation of deepmd-gnn OPs: AUTO, ON, or OFF")
 set_property(CACHE DEEPMD_GNN_WITH_CUDA PROPERTY STRINGS AUTO ON OFF)
 option(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
        "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable" ON)
@@ -48,7 +49,8 @@ if(DEEPMD_GNN_ENABLE_CUDA)
   if(NOT DEEPMD_GNN_NVCC_EXECUTABLE)
     message(FATAL_ERROR "DEEPMD_GNN_WITH_CUDA=ON requires nvcc")
   endif()
-  message(STATUS "nvcc found at ${DEEPMD_GNN_NVCC_EXECUTABLE}; enabling CUDA OP")
+  message(
+    STATUS "nvcc found at ${DEEPMD_GNN_NVCC_EXECUTABLE}; enabling CUDA OP")
   set(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
       OFF
       CACHE BOOL
