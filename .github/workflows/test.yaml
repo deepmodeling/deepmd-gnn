@@ -5,6 +5,7 @@ on:
     branches:
       - master
   pull_request:
+  merge_group:
 
 env:
   UV_SYSTEM_PYTHON: 1
@@ -55,3 +56,14 @@ jobs:
         run: uv pip install nox[uv]
       - name: Test with LAMMPS
         run: nox -db uv -s lammps
+
+  pass:
+    name: Pass testing Python
+    needs: [build, lammps]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
