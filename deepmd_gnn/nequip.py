@@ -425,6 +425,7 @@ class NequipModel(BaseModel):
         box: torch.Tensor | None = None,
         fparam: torch.Tensor | None = None,
         aparam: torch.Tensor | None = None,
+        charge_spin: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Forward pass of the model.
@@ -444,6 +445,7 @@ class NequipModel(BaseModel):
         do_atomic_virial : bool, optional
             Whether to compute atomic virial.
         """
+        _ = charge_spin
         nloc = atype.shape[1]
         extended_coord, extended_atype, mapping, nlist = (
             extend_input_and_build_neighbor_list(
@@ -521,9 +523,7 @@ class NequipModel(BaseModel):
         comm_dict : dict[str, torch.Tensor], optional
             The communication dictionary.
         """
-        if charge_spin is not None:
-            msg = "charge_spin is unsupported"
-            raise ValueError(msg)
+        _ = charge_spin
         nloc = nlist.shape[1]
         nf, nall = extended_atype.shape
         # recalculate nlist for ghost atoms
@@ -842,9 +842,7 @@ class NequipModel(BaseModel):
         do_atomic_virial: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Forward lower pass with internal DeePMD output names."""
-        if charge_spin is not None:
-            msg = "charge_spin is unsupported"
-            raise ValueError(msg)
+        _ = charge_spin
         return self.forward_lower_common(
             nlist.shape[1],
             extended_coord,

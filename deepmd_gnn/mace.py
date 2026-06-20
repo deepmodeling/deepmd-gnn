@@ -653,6 +653,7 @@ class MaceModel(BaseModel):
         box: Optional[torch.Tensor] = None,
         fparam: Optional[torch.Tensor] = None,
         aparam: Optional[torch.Tensor] = None,
+        charge_spin: Optional[torch.Tensor] = None,
         do_atomic_virial: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Forward pass of the model.
@@ -672,6 +673,7 @@ class MaceModel(BaseModel):
         do_atomic_virial : bool, optional
             Whether to compute atomic virial.
         """
+        _ = charge_spin
         nloc = atype.shape[1]
         extended_coord, extended_atype, mapping, nlist = (
             extend_input_and_build_neighbor_list(
@@ -749,9 +751,7 @@ class MaceModel(BaseModel):
         comm_dict : dict[str, torch.Tensor], optional
             The communication dictionary.
         """
-        if charge_spin is not None:
-            msg = "charge_spin is unsupported"
-            raise ValueError(msg)
+        _ = charge_spin
         nloc = nlist.shape[1]
         _nf, nall = extended_atype.shape
         # calculate nlist for ghost atoms, as LAMMPS does not calculate it
@@ -1198,9 +1198,7 @@ class MaceModel(BaseModel):
         do_atomic_virial: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Forward lower pass with internal DeePMD output names."""
-        if charge_spin is not None:
-            msg = "charge_spin is unsupported"
-            raise ValueError(msg)
+        _ = charge_spin
         return self.forward_lower_common(
             nlist.shape[1],
             extended_coord,
