@@ -49,16 +49,29 @@ def test_mace_pt_expt_export_handles_dynamic_nloc(tmp_path) -> None:
     exported = torch.export.export(
         traced,
         sample_inputs,
-        dynamic_shapes=_build_dynamic_shapes(*sample_inputs),
+        dynamic_shapes=_build_dynamic_shapes(
+            *sample_inputs,
+            model_nnei=sum(model.get_sel()),
+        ),
         strict=False,
     )
     assert exported._guards_code == []  # noqa: SLF001
+    assert not any(
+        node.op == "call_function"
+        and node.target is torch.ops.aten._assert_scalar.default  # noqa: SLF001
+        for node in exported.graph_module.graph.nodes
+    )
+    assert all(
+        value_range.lower <= 1 for value_range in exported.range_constraints.values()
+    )
 
     model_file = tmp_path / "model.pt2"
     torch.export.save(exported, model_file)
     module = torch.export.load(model_file).module()
 
-    for nloc in (2, 3):
-        inputs = _make_sample_inputs(model, nframes=2, nloc=nloc)
-        outputs = module(*inputs)
+    for nloc, nnei in ((2, model.get_nnei()), (3, 48)):
+        inputs = list(_make_sample_inputs(model, nframes=2, nloc=nloc))
+        inputs[2] = inputs[2][..., :nnei]
+        runtime_inputs = tuple(inputs)
+        outputs = module(*runtime_inputs)
         assert outputs["energy"].shape == (2, nloc, 1)
