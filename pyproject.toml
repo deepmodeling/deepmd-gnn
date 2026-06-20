@@ -41,8 +41,12 @@ keywords = [
 deepmd-gnn = "deepmd_gnn.cli:main"
 
 [project.entry-points."deepmd.pt"]
-mace = "deepmd_gnn.mace:MaceModel"
-nequip = "deepmd_gnn.nequip:NequipModel"
+mace = "deepmd_gnn.pt:load"
+nequip = "deepmd_gnn.pt:load"
+
+[project.entry-points."deepmd.pt_expt"]
+mace = "deepmd_gnn.pt_expt:load"
+nequip = "deepmd_gnn.pt_expt:load"
 
 [project.urls]
 repository = "https://gitlab.com/RutgersLBSR/deepmd-gnn"

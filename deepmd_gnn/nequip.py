@@ -46,8 +46,12 @@ from e3nn.util.jit import (
     script,
 )
 from nequip.model import model_from_config
+from torch.fx.experimental.proxy_tensor import (
+    make_fx,
+)
 
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+from deepmd_gnn.edge import dense_edge_index
 
 
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
@@ -320,6 +324,10 @@ class NequipModel(BaseModel):
             ],
         )
 
+    def atomic_output_def(self) -> FittingOutputDef:
+        """Get the atomic output def used by the exportable backend."""
+        return self.fitting_output_def()
+
     @torch.jit.export
     def get_rcut(self) -> float:
         """Get the cut-off radius."""
@@ -571,11 +579,23 @@ class NequipModel(BaseModel):
 
         extended_coord_ff = extended_coord.view(nf * nall, 3)
         extended_atype_ff = extended_atype.view(nf * nall)
-        edge_index = torch.ops.deepmd_gnn.edge_index(
-            nlist,
-            extended_atype,
-            torch.tensor(self.mm_types, dtype=torch.int64, device="cpu"),
-        )
+        edge_mask = torch.jit.annotate(torch.Tensor | None, None)
+        if torch.jit.is_scripting() or not getattr(
+            self,
+            "_use_exportable_edge_index",
+            False,
+        ):
+            edge_index = torch.ops.deepmd_gnn.edge_index(
+                nlist,
+                extended_atype,
+                torch.tensor(self.mm_types, dtype=torch.int64, device="cpu"),
+            )
+        else:
+            edge_index, edge_mask = dense_edge_index(
+                nlist,
+                extended_atype,
+                self.mm_types,
+            )
         edge_index = edge_index.T
         # Nequip and MACE have different defination for edge_index
         edge_index = edge_index[[1, 0]]
@@ -608,6 +628,11 @@ class NequipModel(BaseModel):
             shifts = shifts_atoms[edge_index[1]] - shifts_atoms[edge_index[0]]
             edge_index = mapping_ff[edge_index]
             input_dict["edge_index"] = edge_index
+        if edge_mask is not None:
+            edge_mask = edge_mask.to(device=shifts.device)
+            far_shifts = torch.zeros_like(shifts)
+            far_shifts[:, 0] = self.rcut * 10.0 + 10.0
+            shifts = torch.where(edge_mask.unsqueeze(-1), shifts, far_shifts)
 
         batch = (
             torch.arange(
@@ -664,6 +689,19 @@ class NequipModel(BaseModel):
             input_dict["edge_cell_shift"] = edge_cell_shift
         else:
             input_dict["pos"] = extended_coord_ff
+            if edge_mask is not None:
+                input_dict["batch"] = batch
+                input_dict["ptr"] = ptr
+                input_dict["cell"] = (
+                    torch.eye(
+                        3,
+                        dtype=extended_coord_ff.dtype,
+                        device=extended_coord_ff.device,
+                    )
+                    .unsqueeze(0)
+                    .expand(nf, 3, 3)
+                )
+                input_dict["edge_cell_shift"] = shifts
 
         ret = self.model.forward(
             input_dict,
@@ -759,6 +797,79 @@ class NequipModel(BaseModel):
             "energy": atom_energy.view(nf, nloc, 1).to(extended_coord_.dtype),
             "energy_derv_c": atomic_virial.to(extended_coord_.dtype),
         }
+
+    def forward_common_lower(
+        self,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: torch.Tensor | None = None,
+        fparam: torch.Tensor | None = None,
+        aparam: torch.Tensor | None = None,
+        do_atomic_virial: bool = False,
+    ) -> dict[str, torch.Tensor]:
+        """Forward lower pass with internal DeePMD output names."""
+        return self.forward_lower_common(
+            nlist.shape[1],
+            extended_coord,
+            extended_atype,
+            nlist,
+            mapping=mapping,
+            fparam=fparam,
+            aparam=aparam,
+            do_atomic_virial=do_atomic_virial,
+            comm_dict=None,
+        )
+
+    def forward_common_lower_exportable(
+        self,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: torch.Tensor | None = None,
+        fparam: torch.Tensor | None = None,
+        aparam: torch.Tensor | None = None,
+        do_atomic_virial: bool = False,
+        **make_fx_kwargs: object,
+    ) -> torch.nn.Module:
+        """Trace ``forward_common_lower`` for ``torch.export`` serialization."""
+        make_fx_kwargs = make_fx_kwargs.copy()
+        if make_fx_kwargs.get("tracing_mode") == "symbolic":
+            make_fx_kwargs["tracing_mode"] = "real"
+            make_fx_kwargs.pop("_allow_non_fake_inputs", None)
+        model = self
+
+        def fn(
+            extended_coord: torch.Tensor,
+            extended_atype: torch.Tensor,
+            nlist: torch.Tensor,
+            mapping: torch.Tensor | None,
+            fparam: torch.Tensor | None,
+            aparam: torch.Tensor | None,
+        ) -> dict[str, torch.Tensor]:
+            extended_coord = extended_coord.detach().requires_grad_(requires_grad=True)
+            return model.forward_common_lower(
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping=mapping,
+                fparam=fparam,
+                aparam=aparam,
+                do_atomic_virial=do_atomic_virial,
+            )
+
+        self._use_exportable_edge_index = True
+        try:
+            return make_fx(fn, **make_fx_kwargs)(
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping,
+                fparam,
+                aparam,
+            )
+        finally:
+            self._use_exportable_edge_index = False
 
     def serialize(self) -> dict:
         """Serialize the model."""

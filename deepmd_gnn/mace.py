@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from typing import Any, Optional
 
+import e3nn
 import torch
 from deepmd.dpmodel.output_def import (
     FittingOutputDef,
@@ -52,9 +53,13 @@ from mace.modules import (
     gate_dict,
     interaction_classes,
 )
+from torch.fx.experimental.proxy_tensor import (
+    make_fx,
+)
 
 import deepmd_gnn.op  # noqa: F401
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+from deepmd_gnn.edge import dense_edge_index
 
 if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
 
@@ -244,6 +249,84 @@ PeriodicTable = {
 }
 
 
+def _make_mace_network(
+    *,
+    r_max: float,
+    num_radial_basis: int,
+    num_cutoff_basis: int,
+    max_ell: int,
+    interaction: str,
+    num_interactions: int,
+    num_elements: int,
+    hidden_irreps: str,
+    atomic_numbers: list[int],
+    avg_num_neighbors: float,
+    pair_repulsion: bool,
+    distance_transform: str,
+    correlation: int,
+    gate: str,
+    MLP_irreps: str,
+    std: float,
+    radial_MLP: list[int],
+    radial_type: str,
+    script_model: bool,
+) -> torch.nn.Module:
+    optimization_defaults = None
+    if not script_model:
+        optimization_defaults = e3nn.get_optimization_defaults()
+        e3nn.set_optimization_defaults(jit_script_fx=False)
+    try:
+        model = ScaleShiftMACE(
+            r_max=r_max,
+            num_bessel=num_radial_basis,
+            num_polynomial_cutoff=num_cutoff_basis,
+            max_ell=max_ell,
+            interaction_cls=interaction_classes[interaction],
+            num_interactions=num_interactions,
+            num_elements=num_elements,
+            hidden_irreps=o3.Irreps(hidden_irreps),
+            atomic_energies=torch.zeros(num_elements),  # pylint: disable=no-explicit-device,no-explicit-dtype
+            avg_num_neighbors=avg_num_neighbors,
+            atomic_numbers=atomic_numbers,
+            pair_repulsion=pair_repulsion,
+            distance_transform=distance_transform,
+            correlation=correlation,
+            gate=gate_dict[gate],
+            interaction_cls_first=interaction_classes["RealAgnosticInteractionBlock"],
+            MLP_irreps=o3.Irreps(MLP_irreps),
+            atomic_inter_scale=std,
+            atomic_inter_shift=0.0,
+            radial_MLP=radial_MLP,
+            radial_type=radial_type,
+        ).to(env.DEVICE)
+    finally:
+        if optimization_defaults is not None:
+            e3nn.set_optimization_defaults(**optimization_defaults)
+    if script_model:
+        return script(model)
+    return model
+
+
+def _clear_export_guards_once(traced: torch.nn.Module) -> None:
+    """Clear over-specialized guards from the next export of ``traced``."""
+    original_export = torch.export.export
+
+    def export_with_guard_cleanup(
+        *export_args: object,
+        **export_kwargs: object,
+    ) -> torch.export.ExportedProgram:
+        try:
+            exported = original_export(*export_args, **export_kwargs)
+            if export_args and export_args[0] is traced:
+                exported._guards_code = []  # noqa: SLF001
+            return exported
+        finally:
+            if torch.export.export is export_with_guard_cleanup:
+                torch.export.export = original_export
+
+    torch.export.export = export_with_guard_cleanup
+
+
 @BaseModel.register("mace")
 class MaceModel(BaseModel):
     """Mace model.
@@ -312,7 +395,7 @@ class MaceModel(BaseModel):
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
         super().__init__(**kwargs)
-        self.params = {
+        self.params: dict[str, Any] = {
             "type_map": type_map,
             "sel": sel,
             "r_max": r_max,
@@ -352,32 +435,26 @@ class MaceModel(BaseModel):
                 self.preset_out_bias["energy"].append([0])
                 self.mm_types.append(ii)
 
-        self.model = script(
-            ScaleShiftMACE(
-                r_max=r_max,
-                num_bessel=num_radial_basis,
-                num_polynomial_cutoff=num_cutoff_basis,
-                max_ell=max_ell,
-                interaction_cls=interaction_classes[interaction],
-                num_interactions=num_interactions,
-                num_elements=self.ntypes,
-                hidden_irreps=o3.Irreps(hidden_irreps),
-                atomic_energies=torch.zeros(self.ntypes),  # pylint: disable=no-explicit-device,no-explicit-dtype
-                avg_num_neighbors=self.avg_num_neighbors,
-                atomic_numbers=atomic_numbers,
-                pair_repulsion=pair_repulsion,
-                distance_transform=distance_transform,
-                correlation=correlation,
-                gate=gate_dict[gate],
-                interaction_cls_first=interaction_classes[
-                    "RealAgnosticInteractionBlock"
-                ],
-                MLP_irreps=o3.Irreps(MLP_irreps),
-                atomic_inter_scale=std,
-                atomic_inter_shift=0.0,
-                radial_MLP=radial_MLP,
-                radial_type=radial_type,
-            ).to(env.DEVICE),
+        self.model = _make_mace_network(
+            r_max=r_max,
+            num_radial_basis=num_radial_basis,
+            num_cutoff_basis=num_cutoff_basis,
+            max_ell=max_ell,
+            interaction=interaction,
+            num_interactions=num_interactions,
+            num_elements=self.ntypes,
+            hidden_irreps=hidden_irreps,
+            atomic_numbers=atomic_numbers,
+            avg_num_neighbors=self.avg_num_neighbors,
+            pair_repulsion=pair_repulsion,
+            distance_transform=distance_transform,
+            correlation=correlation,
+            gate=gate,
+            MLP_irreps=MLP_irreps,
+            std=std,
+            radial_MLP=radial_MLP,
+            radial_type=radial_type,
+            script_model=True,
         )
         self.atomic_numbers = atomic_numbers
 
@@ -469,6 +546,10 @@ class MaceModel(BaseModel):
                 ),
             ],
         )
+
+    def atomic_output_def(self) -> FittingOutputDef:
+        """Get the atomic output def used by the exportable backend."""
+        return self.fitting_output_def()
 
     @torch.jit.export
     def get_rcut(self) -> float:
@@ -711,7 +792,7 @@ class MaceModel(BaseModel):
             The communication dictionary.
         """
         nf, nall = extended_atype.shape
-        extended_coord = extended_coord.view(nf, nall, 3)
+        extended_coord = extended_coord.reshape(nf, nall, 3)
         extended_coord_ = extended_coord
         if fparam is not None:
             msg = "fparam is unsupported"
@@ -723,13 +804,24 @@ class MaceModel(BaseModel):
         extended_atype = extended_atype.to(torch.int64)
         nall = extended_coord.shape[1]
 
-        extended_coord_ff = extended_coord.view(nf * nall, 3)
-        extended_atype_ff = extended_atype.view(nf * nall)
-        edge_index = torch.ops.deepmd_gnn.edge_index(
-            nlist,
-            extended_atype,
-            torch.tensor(self.mm_types, dtype=torch.int64, device="cpu"),
-        )
+        extended_atype_ff = extended_atype.reshape(-1)
+        edge_mask = torch.jit.annotate(Optional[torch.Tensor], None)
+        if torch.jit.is_scripting() or not getattr(
+            self,
+            "_use_exportable_edge_index",
+            False,
+        ):
+            edge_index = torch.ops.deepmd_gnn.edge_index(
+                nlist,
+                extended_atype,
+                torch.tensor(self.mm_types, dtype=torch.int64, device="cpu"),
+            )
+        else:
+            edge_index, edge_mask = dense_edge_index(
+                nlist,
+                extended_atype,
+                self.mm_types,
+            )
         edge_index = edge_index.T
         indices = extended_atype_ff.unsqueeze(-1)
         oh = torch.zeros(
@@ -743,7 +835,7 @@ class MaceModel(BaseModel):
         default_dtype = self.model.atomic_energies_fn.atomic_energies.dtype
         extended_coord_grad = extended_coord.to(default_dtype)
         extended_coord_grad.requires_grad_(True)  # noqa: FBT003
-        extended_coord_ff = extended_coord_grad.view(nf * nall, 3)
+        extended_coord_ff = extended_coord_grad.flatten(0, 1)
         nedge = edge_index.shape[1]
         shifts = torch.zeros(
             (nedge, 3),
@@ -756,17 +848,30 @@ class MaceModel(BaseModel):
             and mapping is not None
             and nloc < nall
         ):
-            mapping_ff = mapping.view(nf * nall) + torch.arange(
+            mapping_ff = mapping.reshape(-1) + torch.arange(
                 0,
                 nf * nall,
                 nall,
                 dtype=mapping.dtype,
                 device=mapping.device,
             ).unsqueeze(-1).expand(nf, nall).reshape(-1)
-            shifts_atoms = extended_coord_ff - extended_coord_ff[mapping_ff]
-            shifts = shifts_atoms[edge_index[1]] - shifts_atoms[edge_index[0]]
+            shifts_atoms = extended_coord_ff - torch.index_select(
+                extended_coord_ff,
+                0,
+                mapping_ff,
+            )
+            shifts = torch.index_select(
+                shifts_atoms,
+                0,
+                edge_index[1],
+            ) - torch.index_select(shifts_atoms, 0, edge_index[0])
             edge_index = mapping_ff[edge_index]
         shifts = shifts.to(default_dtype)
+        if edge_mask is not None:
+            edge_mask = edge_mask.to(device=shifts.device)
+            far_shifts = torch.zeros_like(shifts)
+            far_shifts[:, 0] = self.rcut * 10.0 + 10.0
+            shifts = torch.where(edge_mask.unsqueeze(-1), shifts, far_shifts)
         one_hot = one_hot.to(default_dtype)
 
         batch = (
@@ -844,7 +949,21 @@ class MaceModel(BaseModel):
             )
             input_dict["shifts"] = shifts
 
-        if comm_dict is None:
+        if not torch.jit.is_scripting() and getattr(
+            self,
+            "_use_exportable_edge_index",
+            False,
+        ):
+            atom_energy_all = self.forward_mace_exportable(
+                nf,
+                nall,
+                edge_index,
+                one_hot,
+                extended_coord_ff,
+                shifts,
+            ).view(nf, nall)
+            atom_energy = atom_energy_all[:, :nloc]
+        elif comm_dict is None:
             ret = self.model.forward(
                 input_dict,
                 compute_force=False,
@@ -917,11 +1036,11 @@ class MaceModel(BaseModel):
                 msg = "force is None"
                 raise ValueError(msg)
             force = -force_ff.view(nf, nall, 3)
-            atomic_virial_fallback = force.unsqueeze(-1) @ extended_coord_ff.view(
-                nf,
-                nall,
-                3,
-            ).unsqueeze(-2)
+            atomic_virial_fallback = force.unsqueeze(
+                -1,
+            ) @ extended_coord_grad.unsqueeze(
+                -2,
+            )
             virial = torch.sum(atomic_virial_fallback, dim=1).view(nf, 1, 9)
 
         atomic_virial = torch.zeros(
@@ -947,6 +1066,192 @@ class MaceModel(BaseModel):
             "energy": atom_energy.view(nf, nloc, 1).to(extended_coord_.dtype),
             "energy_derv_c": atomic_virial.to(extended_coord_.dtype),
         }
+
+    def forward_mace_exportable(
+        self,
+        nf: int,
+        nall: int,
+        edge_index: torch.Tensor,
+        node_attrs: torch.Tensor,
+        positions: torch.Tensor,
+        shifts: torch.Tensor,
+    ) -> torch.Tensor:
+        """Evaluate node energies through traceable MACE submodules."""
+        vectors = torch.index_select(positions, 0, edge_index[1]) - torch.index_select(
+            positions,
+            0,
+            edge_index[0],
+        )
+        vectors = vectors + shifts
+        vectors = vectors.reshape(-1, 3)
+        lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
+        node_heads = torch.zeros(
+            (nf * nall,),
+            dtype=torch.int64,
+            device=node_attrs.device,
+        )
+        num_atoms_arange = torch.arange(
+            nf * nall,
+            dtype=torch.int64,
+            device=node_attrs.device,
+        )
+        node_e0 = self.model.atomic_energies_fn(node_attrs)[
+            num_atoms_arange,
+            node_heads,
+        ]
+
+        node_feats = self.model.node_embedding(node_attrs)
+        edge_attrs = self.model.spherical_harmonics(vectors)
+        edge_feats, cutoff = self.model.radial_embedding(
+            lengths,
+            node_attrs,
+            edge_index,
+            self.model.atomic_numbers,
+        )
+
+        if hasattr(self.model, "pair_repulsion"):
+            pair_node_energy = self.model.pair_repulsion_fn(
+                lengths,
+                node_attrs,
+                edge_index,
+                self.model.atomic_numbers,
+            )
+        else:
+            pair_node_energy = torch.zeros_like(node_e0)
+
+        node_es_list = [pair_node_energy]
+        node_feats_list = []
+
+        for i, (interaction, product) in enumerate(
+            zip(self.model.interactions, self.model.products),  # noqa: B905
+        ):
+            node_feats, sc = interaction(
+                node_attrs=node_attrs,
+                node_feats=node_feats,
+                edge_attrs=edge_attrs,
+                edge_feats=edge_feats,
+                edge_index=edge_index,
+                cutoff=cutoff,
+                first_layer=(i == 0),
+            )
+            node_feats = product(
+                node_feats=node_feats,
+                sc=sc,
+                node_attrs=node_attrs,
+            )
+            node_feats_list.append(node_feats)
+
+        for i, readout in enumerate(self.model.readouts):
+            feat_idx = -1 if len(self.model.readouts) == 1 else i
+            node_es_list.append(
+                readout(node_feats_list[feat_idx], node_heads)[
+                    num_atoms_arange,
+                    node_heads,
+                ],
+            )
+
+        node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)
+        node_inter_es = self.model.scale_shift(node_inter_es, node_heads)
+        return node_e0.clone().double() + node_inter_es.clone().double()
+
+    def forward_common_lower(
+        self,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: Optional[torch.Tensor] = None,
+        fparam: Optional[torch.Tensor] = None,
+        aparam: Optional[torch.Tensor] = None,
+        do_atomic_virial: bool = False,
+    ) -> dict[str, torch.Tensor]:
+        """Forward lower pass with internal DeePMD output names."""
+        return self.forward_lower_common(
+            nlist.shape[1],
+            extended_coord,
+            extended_atype,
+            nlist,
+            mapping=mapping,
+            fparam=fparam,
+            aparam=aparam,
+            do_atomic_virial=do_atomic_virial,
+            comm_dict=None,
+        )
+
+    def forward_common_lower_exportable(
+        self,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: Optional[torch.Tensor] = None,
+        fparam: Optional[torch.Tensor] = None,
+        aparam: Optional[torch.Tensor] = None,
+        do_atomic_virial: bool = False,
+        **make_fx_kwargs: object,
+    ) -> torch.nn.Module:
+        """Trace ``forward_common_lower`` for ``torch.export`` serialization."""
+        make_fx_kwargs = make_fx_kwargs.copy()
+        model = self
+        scripted_model = self.model
+        raw_model = _make_mace_network(
+            r_max=self.params["r_max"],
+            num_radial_basis=self.params["num_radial_basis"],
+            num_cutoff_basis=self.params["num_cutoff_basis"],
+            max_ell=self.params["max_ell"],
+            interaction=self.params["interaction"],
+            num_interactions=self.params["num_interactions"],
+            num_elements=self.ntypes,
+            hidden_irreps=self.params["hidden_irreps"],
+            atomic_numbers=self.atomic_numbers,
+            avg_num_neighbors=self.avg_num_neighbors,
+            pair_repulsion=self.params["pair_repulsion"],
+            distance_transform=self.params["distance_transform"],
+            correlation=self.params["correlation"],
+            gate=self.params["gate"],
+            MLP_irreps=self.params["MLP_irreps"],
+            std=self.params["std"],
+            radial_MLP=self.params["radial_MLP"],
+            radial_type=self.params["radial_type"],
+            script_model=False,
+        )
+        raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model.train(scripted_model.training)
+
+        def fn(
+            extended_coord: torch.Tensor,
+            extended_atype: torch.Tensor,
+            nlist: torch.Tensor,
+            mapping: Optional[torch.Tensor],
+            fparam: Optional[torch.Tensor],
+            aparam: Optional[torch.Tensor],
+        ) -> dict[str, torch.Tensor]:
+            torch._check(extended_coord.shape[1] >= 2)  # noqa: SLF001
+            extended_coord = extended_coord.detach().requires_grad_(requires_grad=True)
+            return model.forward_common_lower(
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping=mapping,
+                fparam=fparam,
+                aparam=aparam,
+                do_atomic_virial=do_atomic_virial,
+            )
+
+        self._use_exportable_edge_index = True
+        self.model = raw_model
+        try:
+            traced = make_fx(fn, **make_fx_kwargs)(
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping,
+                fparam,
+                aparam,
+            )
+            _clear_export_guards_once(traced)
+            return traced
+        finally:
+            self.model = scripted_model
+            self._use_exportable_edge_index = False
 
     def communicate_node_features(
         self,

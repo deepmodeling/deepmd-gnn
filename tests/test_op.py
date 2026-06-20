@@ -4,6 +4,7 @@ import pytest
 import torch
 
 import deepmd_gnn.op  # noqa: F401
+from deepmd_gnn.edge import dense_edge_index
 
 
 def test_one_frame() -> None:
@@ -39,8 +40,14 @@ def test_one_frame() -> None:
         extended_atype_ff,
         torch.tensor(mm_types, dtype=torch.int64, device="cpu"),
     )
+    dense_edge_index_, edge_mask = dense_edge_index(
+        nlist_ff,
+        extended_atype_ff,
+        mm_types,
+    )
 
     assert torch.equal(edge_index, expected_edge_index)
+    assert torch.equal(dense_edge_index_[edge_mask], expected_edge_index)
 
 
 def test_two_frame() -> None:
@@ -70,6 +77,7 @@ def test_two_frame() -> None:
         device="cpu",
     )
     mm_types = [1, 2]
+    mm_tensor = torch.tensor(mm_types, dtype=torch.int64, device="cpu")
     expected_edge_index = torch.tensor(
         [
             [1, 0],
@@ -88,17 +96,21 @@ def test_two_frame() -> None:
     edge_index = torch.ops.deepmd_gnn.edge_index(
         nlist,
         extended_atype,
-        torch.tensor(mm_types, dtype=torch.int64, device="cpu"),
+        mm_tensor,
     )
-
-    assert torch.equal(edge_index, expected_edge_index)
-
+    dense_edge_index_, edge_mask = dense_edge_index(
+        nlist,
+        extended_atype,
+        mm_types,
+    )
     legacy_edge_index = torch.ops.deepmd_mace.mace_edge_index(
         nlist,
         extended_atype,
-        torch.tensor(mm_types, dtype=torch.int64, device="cpu"),
+        mm_tensor,
     )
 
+    assert torch.equal(edge_index, expected_edge_index)
+    assert torch.equal(dense_edge_index_[edge_mask], expected_edge_index)
     assert torch.equal(legacy_edge_index, expected_edge_index)
 
 
