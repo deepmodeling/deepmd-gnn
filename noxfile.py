@@ -11,7 +11,7 @@ UV_OVERRIDES = "requirements-overrides.txt"
 MACE_E3NN = "e3nn==0.4.4"
 RUNTIME_DEPS = [
     "mace-torch>=0.3.5",
-    "nequip",
+    "nequip<0.7",
     MACE_E3NN,
     "dargs",
 ]
