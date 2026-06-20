@@ -56,6 +56,12 @@ def _prepend_env_path(env: dict[str, str], name: str, *paths: Path | str) -> Non
     env[name] = os.pathsep.join(entries)
 
 
+def _configure_mpi_runtime_env(env: dict[str, str]) -> None:
+    # GitHub-hosted Azure runners expose a MANA interface that MPICH/UCX may
+    # select as ud_verbs, but that path fails during MPI_Init in this job.
+    env.setdefault("UCX_TLS", "tcp,self")
+
+
 def _deepmd_lib_dir() -> Path:
     try:
         deepmd_env = importlib.import_module("deepmd.env")
@@ -122,6 +128,7 @@ def _lammps_env() -> dict[str, str]:
     env.setdefault("OMP_NUM_THREADS", "1")
     env.setdefault("OMPI_ALLOW_RUN_AS_ROOT", "1")
     env.setdefault("OMPI_ALLOW_RUN_AS_ROOT_CONFIRM", "1")
+    _configure_mpi_runtime_env(env)
 
     if platform.system() == "Darwin":
         lib_env = "DYLD_FALLBACK_LIBRARY_PATH"
@@ -159,6 +166,7 @@ def _freeze_mace_model(tmp_path: Path, backend_flag: str) -> Path:
 
     env = os.environ.copy()
     env.setdefault("OMP_NUM_THREADS", "1")
+    _configure_mpi_runtime_env(env)
     if backend_flag == "--pt-expt":
         env = pt_expt_cli_env(work_dir, env)
     _run_command(
