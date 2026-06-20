@@ -48,14 +48,24 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential wget
+          if ! command -v nvcc; then
+            UBUNTU_VERSION=$(lsb_release -rs | tr -d '.')
+            OS_NAME="ubuntu${UBUNTU_VERSION}"
+            wget https://developer.download.nvidia.com/compute/cuda/repos/${OS_NAME}/x86_64/cuda-keyring_1.1-1_all.deb
+            sudo dpkg -i cuda-keyring_1.1-1_all.deb
+            sudo apt-get update
+            sudo apt-get -y install cuda-toolkit-12-9
+            echo "CUDA_PATH=/usr/local/cuda-12.9" >> "$GITHUB_ENV"
+            echo "/usr/local/cuda-12.9/bin" >> "$GITHUB_PATH"
+          fi
       - name: Install dependencies
         run: |
           uv pip install numpy "deepmd-kit[torch,lmp,cpu]>=3.0.0b2" mpi4py mpich
           CMAKE_PREFIX_PATH=$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')
-          CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" uv pip install -e .[test]
-        env:
-          CMAKE_ARGS: -DDEEPMD_GNN_WITH_CUDA=ON
+          CMAKE_ARGS="-DDEEPMD_GNN_WITH_CUDA=ON -DCUDAToolkit_ROOT=${CUDA_PATH:-/usr/local/cuda}" \
+            CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" uv pip install -e .[test]
       - name: Check CUDA availability
         run: |
           python - <<'PY'
