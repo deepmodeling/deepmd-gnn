@@ -13,6 +13,11 @@ endmacro()
 option(BUILD_CPP_IF "Build C++ interfaces" ON)
 option(BUILD_PY_IF "Build Python interfaces" OFF)
 option(USE_PT_PYTHON_LIBS "Use PyTorch Python libraries" OFF)
+set(DEEPMD_GNN_WITH_CUDA
+    "AUTO"
+    CACHE STRING
+          "Build CUDA implementation of deepmd-gnn OPs: AUTO, ON, or OFF")
+set_property(CACHE DEEPMD_GNN_WITH_CUDA PROPERTY STRINGS AUTO ON OFF)
 option(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
        "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable" ON)
 option(DEEPMD_GNN_LINK_TORCH_CUDA "Link the OP against PyTorch CUDA libraries"
@@ -21,6 +26,61 @@ option(DEEPMD_GNN_LINK_TORCH_CUDA "Link the OP against PyTorch CUDA libraries"
 if((NOT BUILD_PY_IF) AND (NOT BUILD_CPP_IF))
   # nothing to do
   message(FATAL_ERROR "Nothing to build.")
+endif()
+
+string(TOUPPER "${DEEPMD_GNN_WITH_CUDA}" DEEPMD_GNN_WITH_CUDA)
+if(NOT DEEPMD_GNN_WITH_CUDA MATCHES "^(AUTO|ON|OFF)$")
+  message(FATAL_ERROR "DEEPMD_GNN_WITH_CUDA must be AUTO, ON, or OFF")
+endif()
+
+if(DEEPMD_GNN_WITH_CUDA STREQUAL "ON")
+  find_package(CUDAToolkit REQUIRED)
+elseif(DEEPMD_GNN_WITH_CUDA STREQUAL "AUTO")
+  find_package(CUDAToolkit QUIET)
+endif()
+
+if(CUDAToolkit_FOUND)
+  set(DEEPMD_GNN_NVCC_EXECUTABLE ${CUDAToolkit_NVCC_EXECUTABLE})
+else()
+  set(DEEPMD_GNN_NVCC_EXECUTABLE "DEEPMD_GNN_NVCC_EXECUTABLE-NOTFOUND")
+endif()
+
+if(DEEPMD_GNN_WITH_CUDA STREQUAL "AUTO")
+  if(CUDAToolkit_FOUND AND DEEPMD_GNN_NVCC_EXECUTABLE)
+    set(DEEPMD_GNN_ENABLE_CUDA ON)
+  else()
+    set(DEEPMD_GNN_ENABLE_CUDA OFF)
+  endif()
+else()
+  set(DEEPMD_GNN_ENABLE_CUDA ${DEEPMD_GNN_WITH_CUDA})
+endif()
+
+if(DEEPMD_GNN_ENABLE_CUDA)
+  if(NOT CUDAToolkit_FOUND OR NOT DEEPMD_GNN_NVCC_EXECUTABLE)
+    message(FATAL_ERROR "DEEPMD_GNN_WITH_CUDA=ON requires CUDAToolkit/nvcc")
+  endif()
+  message(
+    STATUS
+      "Found CUDA in ${CUDAToolkit_BIN_DIR}; enabling CUDA OP with ${DEEPMD_GNN_NVCC_EXECUTABLE}"
+  )
+  set(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
+      OFF
+      CACHE BOOL
+            "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable"
+            FORCE)
+  set(DEEPMD_GNN_LINK_TORCH_CUDA
+      ON
+      CACHE BOOL "Link the OP against PyTorch CUDA libraries" FORCE)
+  if(NOT DEFINED CMAKE_CUDA_COMPILER)
+    set(CMAKE_CUDA_COMPILER ${DEEPMD_GNN_NVCC_EXECUTABLE})
+  endif()
+  if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
+    set(CMAKE_CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
+  endif()
+  enable_language(CUDA)
+else()
+  message(
+    STATUS "CUDAToolkit/nvcc not found or CUDA disabled; building CPU-only OP")
 endif()
 
 if(BUILD_CPP_IF
@@ -50,8 +110,6 @@ if(BUILD_CPP_IF
 endif()
 
 if(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK)
-  find_program(DEEPMD_GNN_NVCC_EXECUTABLE nvcc HINTS "$ENV{CUDA_HOME}/bin"
-                                                     "$ENV{CUDA_PATH}/bin")
   if(NOT DEEPMD_GNN_NVCC_EXECUTABLE AND NOT TARGET torch::cudart)
     message(
       STATUS
