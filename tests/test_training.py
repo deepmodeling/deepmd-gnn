@@ -71,7 +71,6 @@ def test_e2e_training(input_fn) -> None:
     "input_fn",
     [
         "mace.json",
-        "nequip.json",
     ],
 )
 def test_e2e_pt_expt_training_exports_pt2(input_fn) -> None:

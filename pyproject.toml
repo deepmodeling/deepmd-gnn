@@ -46,7 +46,6 @@ nequip = "deepmd_gnn.pt:load"
 
 [project.entry-points."deepmd.pt_expt"]
 mace = "deepmd_gnn.pt_expt:load"
-nequip = "deepmd_gnn.pt_expt:load"
 
 [project.urls]
 repository = "https://gitlab.com/RutgersLBSR/deepmd-gnn"

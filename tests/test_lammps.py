@@ -32,7 +32,6 @@ MODEL_CASES = [
     pytest.param("mace", "--pt", id="mace-pt"),
     pytest.param("mace", "--pt-expt", id="mace-pt-expt"),
     pytest.param("nequip", "--pt", id="nequip-pt"),
-    pytest.param("nequip", "--pt-expt", id="nequip-pt-expt"),
 ]
 MODEL_MPI_PE_TOL = {
     "mace": {"atol": 1e-8, "rtol": 0.0},

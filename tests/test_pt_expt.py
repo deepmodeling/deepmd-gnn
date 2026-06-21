@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Tests for DeePMD-kit's PyTorch exportable backend integration."""
 
+import pytest
 import torch
 from deepmd.pt.model.model.model import (
     BaseModel as PtBaseModel,
@@ -20,11 +21,12 @@ from deepmd_gnn.nequip import NequipModel
 
 
 def test_pt_and_pt_expt_entry_points_register_models() -> None:
-    """Model classes are available through both PyTorch backend registries."""
+    """Model classes are available through their supported backend registries."""
     assert PtBaseModel.get_class_by_type("mace") is MaceModel
     assert PtBaseModel.get_class_by_type("nequip") is NequipModel
     assert PtExptBaseModel.get_class_by_type("mace") is MaceModel
-    assert PtExptBaseModel.get_class_by_type("nequip") is NequipModel
+    with pytest.raises(RuntimeError, match="Unknown model type: nequip"):
+        PtExptBaseModel.get_class_by_type("nequip")
 
 
 def test_mace_pt_expt_export_handles_dynamic_nloc(tmp_path) -> None:
