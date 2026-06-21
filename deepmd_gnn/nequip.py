@@ -1058,7 +1058,7 @@ class NequipModel(BaseModel):
         return {
             "@class": "Model",
             "@version": 1,
-            "type": "mace",
+            "type": "nequip",
             **self.params,
             "@variables": {
                 **{
@@ -1072,7 +1072,7 @@ class NequipModel(BaseModel):
     def deserialize(cls, data: dict) -> "NequipModel":
         """Deserialize the model."""
         data = data.copy()
-        if not (data.pop("@class") == "Model" and data.pop("type") == "mace"):
+        if not (data.pop("@class") == "Model" and data.pop("type") == "nequip"):
             msg = "data is not a serialized NequipModel"
             raise ValueError(msg)
         check_version_compatibility(data.pop("@version"), 1, 1)

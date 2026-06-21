@@ -35,6 +35,13 @@ def _empty_comm_dict() -> dict[str, torch.Tensor]:
     }
 
 
+def test_nequip_serializes_with_nequip_type() -> None:
+    """NequIP checkpoints should deserialize through NequipModel, not MaceModel."""
+    model = _make_nequip_model()
+
+    assert model.serialize()["type"] == "nequip"
+
+
 def test_nequip_comm_branch_matches_regular_lower_without_ghosts(monkeypatch) -> None:
     """Identity communication should reproduce the regular lower path."""
 
