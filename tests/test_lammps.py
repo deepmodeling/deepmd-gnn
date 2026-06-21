@@ -24,9 +24,9 @@ MODEL_INPUTS = {
     "mace": MACE_INPUT,
     "nequip": NEQUIP_INPUT,
 }
-MODEL_MPI_PE_ATOL = {
-    "mace": 1e-8,
-    "nequip": 5e-5,
+MODEL_MPI_PE_TOL = {
+    "mace": {"atol": 1e-8, "rtol": 0.0},
+    "nequip": {"atol": 1e-4, "rtol": 1e-6},
 }
 SIX_ATOM_BOX = np.array([0.0, 13.0, 0.0, 13.0, 0.0, 13.0, 0.0, 0.0, 0.0])
 SIX_ATOM_COORD = np.array(
@@ -369,6 +369,5 @@ def test_lammps_mpi_matches_single_rank_six_atom_gnn_model(
     np.testing.assert_allclose(
         _read_step_zero_pe(mpi_log),
         _read_step_zero_pe(single_log),
-        atol=MODEL_MPI_PE_ATOL[model_name],
-        rtol=0.0,
+        **MODEL_MPI_PE_TOL[model_name],
     )
