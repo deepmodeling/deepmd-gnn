@@ -28,7 +28,7 @@ dependencies = [
     "torch>=2.10",
     "deepmd-kit[torch]>=3.0.0",
     "mace-torch>=0.3.5",
-    "nequip",
+    "nequip<0.7",
     "e3nn",
     "dargs",
 ]

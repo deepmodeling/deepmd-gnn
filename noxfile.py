@@ -9,7 +9,7 @@ import nox
 nox.options.sessions = ["tests"]
 
 UV_OVERRIDES = "requirements-overrides.txt"
-UV_TORCH_BACKEND = os.environ.get("UV_TORCH_BACKEND", "auto")
+UV_TORCH_BACKEND = os.environ.get("UV_TORCH_BACKEND", "cpu")
 
 
 def install(
