@@ -164,7 +164,7 @@ def _run_command(command: list[str], cwd: Path, env: dict[str, str]) -> None:
         env=env,
         text=True,
         capture_output=True,
-        timeout=180,
+        timeout=300,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -395,10 +395,6 @@ def test_lammps_mpi_matches_single_rank_six_atom_gnn_model(
     backend_flag: str,
 ) -> None:
     """Run a frozen GNN model through DeePMD-kit with two MPI ranks."""
-    if backend_flag == "--pt-expt":
-        pytest.skip(
-            "multi-rank .pt2 LAMMPS requires a deepmd-kit with-comm artifact",
-        )
     _ensure_lammps_available()
     _ensure_mpi_lammps_available()
     lammps_env = _lammps_env()

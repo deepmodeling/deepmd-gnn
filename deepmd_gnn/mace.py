@@ -404,6 +404,8 @@ class MaceModel(BaseModel):
 
     mm_types: list[int]
     _observed_type: Optional[list[str]]
+    _use_exportable_edge_index: bool
+    _use_exportable_border_op: bool
 
     def __init__(
         self,
@@ -428,6 +430,8 @@ class MaceModel(BaseModel):
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
         super().__init__(**kwargs)
+        self._use_exportable_edge_index = False
+        self._use_exportable_border_op = False
         self.params: dict[str, Any] = {
             "type_map": type_map,
             "sel": sel,
@@ -494,6 +498,11 @@ class MaceModel(BaseModel):
     @property
     def atomic_model(self) -> Any:  # noqa: ANN401
         """Provide a compatibility view matching wrapped deepmd-kit models."""
+        return self
+
+    @property
+    def descriptor(self) -> Any:  # noqa: ANN401
+        """Provide descriptor metadata expected by deepmd-kit's pt2 export."""
         return self
 
     @property
@@ -672,6 +681,11 @@ class MaceModel(BaseModel):
     def has_message_passing(self) -> bool:
         """Return whether the descriptor has message passing."""
         return self.num_interactions > 1
+
+    @torch.jit.export
+    def has_message_passing_across_ranks(self) -> bool:
+        """Return whether MPI ranks must exchange layer-wise ghost features."""
+        return self.has_message_passing()
 
     @torch.jit.export
     def need_sorted_nlist_for_lower(self) -> bool:
@@ -1014,10 +1028,14 @@ class MaceModel(BaseModel):
             )
             input_dict["shifts"] = shifts
 
-        if not torch.jit.is_scripting() and getattr(
-            self,
-            "_use_exportable_edge_index",
-            False,
+        if (
+            comm_dict is None
+            and not torch.jit.is_scripting()
+            and getattr(
+                self,
+                "_use_exportable_edge_index",
+                False,
+            )
         ):
             atom_energy_all = self.forward_mace_exportable(
                 nf,
@@ -1229,6 +1247,7 @@ class MaceModel(BaseModel):
         aparam: Optional[torch.Tensor] = None,
         charge_spin: Optional[torch.Tensor] = None,
         do_atomic_virial: bool = False,
+        comm_dict: Optional[dict[str, torch.Tensor]] = None,
     ) -> dict[str, torch.Tensor]:
         """Forward lower pass with internal DeePMD output names."""
         _ = charge_spin
@@ -1241,7 +1260,7 @@ class MaceModel(BaseModel):
             fparam=fparam,
             aparam=aparam,
             do_atomic_virial=do_atomic_virial,
-            comm_dict=None,
+            comm_dict=comm_dict,
         )
 
     def forward_common_lower_exportable(
@@ -1308,6 +1327,7 @@ class MaceModel(BaseModel):
                 do_atomic_virial=do_atomic_virial,
             )
 
+        previous_exportable_edge_index = self._use_exportable_edge_index
         self._use_exportable_edge_index = True
         self.model = raw_model
         try:
@@ -1324,7 +1344,128 @@ class MaceModel(BaseModel):
             return traced
         finally:
             self.model = scripted_model
-            self._use_exportable_edge_index = False
+            self._use_exportable_edge_index = previous_exportable_edge_index
+
+    def forward_common_lower_exportable_with_comm(
+        self,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: Optional[torch.Tensor],
+        fparam: Optional[torch.Tensor],
+        aparam: Optional[torch.Tensor],
+        charge_spin: Optional[torch.Tensor],
+        send_list: torch.Tensor,
+        send_proc: torch.Tensor,
+        recv_proc: torch.Tensor,
+        send_num: torch.Tensor,
+        recv_num: torch.Tensor,
+        communicator: torch.Tensor,
+        nlocal: torch.Tensor,
+        nghost: torch.Tensor,
+        do_atomic_virial: bool = False,
+        **make_fx_kwargs: object,
+    ) -> torch.nn.Module:
+        """Trace ``forward_common_lower`` with explicit MPI comm tensors."""
+        make_fx_kwargs = make_fx_kwargs.copy()
+        model = self
+        scripted_model = self.model
+        raw_model = _make_mace_network(
+            r_max=self.params["r_max"],
+            num_radial_basis=self.params["num_radial_basis"],
+            num_cutoff_basis=self.params["num_cutoff_basis"],
+            max_ell=self.params["max_ell"],
+            interaction=self.params["interaction"],
+            num_interactions=self.params["num_interactions"],
+            num_elements=self.ntypes,
+            hidden_irreps=self.params["hidden_irreps"],
+            atomic_numbers=self.atomic_numbers,
+            avg_num_neighbors=self.avg_num_neighbors,
+            pair_repulsion=self.params["pair_repulsion"],
+            distance_transform=self.params["distance_transform"],
+            correlation=self.params["correlation"],
+            gate=self.params["gate"],
+            MLP_irreps=self.params["MLP_irreps"],
+            std=self.params["std"],
+            radial_MLP=self.params["radial_MLP"],
+            radial_type=self.params["radial_type"],
+            script_model=False,
+        )
+        raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model.to(extended_coord.device)
+        raw_model.train(scripted_model.training)
+
+        def fn(
+            extended_coord: torch.Tensor,
+            extended_atype: torch.Tensor,
+            nlist: torch.Tensor,
+            mapping: Optional[torch.Tensor],
+            fparam: Optional[torch.Tensor],
+            aparam: Optional[torch.Tensor],
+            charge_spin: Optional[torch.Tensor],
+            send_list: torch.Tensor,
+            send_proc: torch.Tensor,
+            recv_proc: torch.Tensor,
+            send_num: torch.Tensor,
+            recv_num: torch.Tensor,
+            communicator: torch.Tensor,
+            nlocal: torch.Tensor,
+            nghost: torch.Tensor,
+        ) -> dict[str, torch.Tensor]:
+            torch._check(extended_coord.shape[1] >= 2)  # noqa: SLF001
+            extended_coord = extended_coord.detach().requires_grad_(requires_grad=True)
+            nlist = _pad_nlist_for_export(nlist)
+            comm_dict = {
+                "send_list": send_list,
+                "send_proc": send_proc,
+                "recv_proc": recv_proc,
+                "send_num": send_num,
+                "recv_num": recv_num,
+                "communicator": communicator,
+                "nlocal": nlocal,
+                "nghost": nghost,
+            }
+            return model.forward_common_lower(
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping=mapping,
+                fparam=fparam,
+                aparam=aparam,
+                charge_spin=charge_spin,
+                do_atomic_virial=do_atomic_virial,
+                comm_dict=comm_dict,
+            )
+
+        previous_exportable_edge_index = self._use_exportable_edge_index
+        previous_exportable_border_op = self._use_exportable_border_op
+        self._use_exportable_edge_index = True
+        self._use_exportable_border_op = True
+        self.model = raw_model
+        try:
+            traced = make_fx(fn, **make_fx_kwargs)(
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping,
+                fparam,
+                aparam,
+                charge_spin,
+                send_list,
+                send_proc,
+                recv_proc,
+                send_num,
+                recv_num,
+                communicator,
+                nlocal,
+                nghost,
+            )
+            _clear_export_guards_once(traced)
+            return traced
+        finally:
+            self.model = scripted_model
+            self._use_exportable_edge_index = previous_exportable_edge_index
+            self._use_exportable_border_op = previous_exportable_border_op
 
     def communicate_node_features(
         self,
@@ -1335,6 +1476,27 @@ class MaceModel(BaseModel):
     ) -> torch.Tensor:
         """Communicate local node features to ghost slots using DeePMD border_op."""
         node_feats = node_feats[:nloc]
+        if not torch.jit.is_scripting() and getattr(
+            self,
+            "_use_exportable_border_op",
+            False,
+        ):
+            node_feats = torch.nn.functional.pad(
+                node_feats,
+                (0, 0, 0, nall - nloc),
+                value=0.0,
+            )
+            return torch.ops.deepmd_export.border_op(
+                comm_dict["send_list"],
+                comm_dict["send_proc"],
+                comm_dict["recv_proc"],
+                comm_dict["send_num"],
+                comm_dict["recv_num"],
+                node_feats,
+                comm_dict["communicator"],
+                comm_dict["nlocal"],
+                comm_dict["nghost"],
+            )
         n_padding = nall - nloc
         if n_padding > 0:
             node_feats = torch.nn.functional.pad(
@@ -1374,10 +1536,18 @@ class MaceModel(BaseModel):
         comm_dict: dict[str, torch.Tensor],
     ) -> torch.Tensor:
         """Evaluate MACE node energies with layer-wise MPI ghost communication."""
-        if positions.shape[0] != nall:
+        if (
+            torch.jit.is_scripting()
+            or not getattr(self, "_use_exportable_border_op", False)
+        ) and positions.shape[0] != nall:
             msg = "MACE comm_dict lower inference only supports one frame"
             raise ValueError(msg)
-        vectors = positions[edge_index[1]] - positions[edge_index[0]] + shifts
+        vectors = torch.index_select(positions, 0, edge_index[1]) - torch.index_select(
+            positions,
+            0,
+            edge_index[0],
+        )
+        vectors = vectors + shifts
         lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
         node_heads = torch.zeros(
             (nall,),

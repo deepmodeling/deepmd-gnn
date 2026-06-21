@@ -7,7 +7,7 @@
       "H"
     ],
     "r_max": 6.0,
-    "sel": "auto",
+    "sel": 16,
     "hidden_irreps": "16x0e",
     "_comment2": " that's all"
   },
