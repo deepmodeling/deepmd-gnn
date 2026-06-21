@@ -1,6 +1,7 @@
 """Test training."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -42,9 +43,10 @@ def _run_e2e_training(input_fn, backend_flag: str, model_fn: str) -> None:
         shutil.copytree(data_path, tmpdir / "data")
         # copy input.json to tmpdir
         shutil.copy(input_path, tmpdir / input_fn)
-        env = None
+        env = os.environ.copy()
+        env.setdefault("OMP_NUM_THREADS", "1")
         if backend_flag == "--pt-expt":
-            env = pt_expt_cli_env(tmpdir)
+            env = pt_expt_cli_env(tmpdir, env)
 
         subprocess.check_call(
             [
