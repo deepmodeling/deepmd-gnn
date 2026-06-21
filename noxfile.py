@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
+
 import nox
 
 nox.options.sessions = ["tests"]
 
 UV_OVERRIDES = "requirements-overrides.txt"
+UV_TORCH_BACKEND = os.environ.get("UV_TORCH_BACKEND", "auto")
 
 
 def install(
@@ -23,7 +26,7 @@ def install(
         "--overrides",
         UV_OVERRIDES,
         "--torch-backend",
-        "auto",
+        UV_TORCH_BACKEND,
     )
 
 
