@@ -87,6 +87,25 @@ dp --pt freeze
 A frozen model file named `frozen_model.pth` will be generated. You can use it in the MD packages or other interfaces.
 For details, follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/).
 
+### Exporting MACE models with the PyTorch exportable backend
+
+MACE models can also be trained and frozen with DeePMD-kit's PyTorch exportable
+backend (`pt_expt`):
+
+```sh
+dp --pt-expt train input.json
+dp --pt-expt freeze -o frozen_model.pt2
+```
+
+Use this path when you need a `.pt2` model for the DeePMD-kit/LAMMPS
+PyTorch exportable runtime. The `pt_expt` path currently supports MACE models;
+NequIP models should still use the regular `--pt` workflow.
+
+The `pt_expt` workflow requires DeePMD-kit 3.2.0 or later. Multi-layer MACE
+models include the extra communication artifact needed by LAMMPS/MPI inside the
+exported `.pt2` package, so the resulting file can be passed to LAMMPS in the
+same way as other DeePMD-kit frozen models.
+
 ### Running LAMMPS + GNN models with period boundary conditions
 
 GNN models use message passing neural networks,
