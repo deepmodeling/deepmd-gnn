@@ -24,7 +24,7 @@ def _make_nequip_model() -> NequipModel:
 
 
 def _empty_comm_dict() -> dict[str, torch.Tensor]:
-    empty = torch.empty(0, dtype=torch.int64)
+    empty = torch.empty(0, dtype=torch.int32)
     return {
         "send_list": empty,
         "send_proc": empty,
