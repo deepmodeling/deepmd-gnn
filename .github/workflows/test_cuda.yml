@@ -25,7 +25,8 @@ jobs:
     name: Test Python package on CUDA
     runs-on: gpu
     env:
-      UV_TORCH_BACKEND: cu129
+      # PyTorch cu129 wheels do not include kernels for the V100 runners (CC 7.0).
+      UV_TORCH_BACKEND: cu128
       CMAKE_ARGS: -DDEEPMD_GNN_WITH_CUDA=ON
     if: >-
       github.repository_owner == 'deepmodeling' &&
@@ -59,9 +60,9 @@ jobs:
             wget https://developer.download.nvidia.com/compute/cuda/repos/${OS_NAME}/x86_64/cuda-keyring_1.1-1_all.deb
             sudo dpkg -i cuda-keyring_1.1-1_all.deb
             sudo apt-get update
-            sudo apt-get -y install cuda-toolkit-12-9
-            echo "CUDA_PATH=/usr/local/cuda-12.9" >> "$GITHUB_ENV"
-            echo "/usr/local/cuda-12.9/bin" >> "$GITHUB_PATH"
+            sudo apt-get -y install cuda-toolkit-12-8
+            echo "CUDA_PATH=/usr/local/cuda-12.8" >> "$GITHUB_ENV"
+            echo "/usr/local/cuda-12.8/bin" >> "$GITHUB_PATH"
           fi
       - name: Install dependencies
         run: uv pip install nox[uv]
