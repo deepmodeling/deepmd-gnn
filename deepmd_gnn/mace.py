@@ -3,6 +3,7 @@
 
 import importlib
 import json
+import warnings
 from copy import deepcopy
 from typing import Any, Optional
 
@@ -69,6 +70,32 @@ def _pad_nlist_for_export(nlist: torch.Tensor) -> torch.Tensor:
         device=nlist.device,
     )
     return torch.cat([nlist, pad], dim=-1)
+
+
+def _make_cueq_config(enable_cueq: bool) -> Any | None:  # noqa: ANN401
+    """Build the MACE cuEquivariance config when requested."""
+    if not enable_cueq:
+        return None
+    wrapper_ops = importlib.import_module("mace.modules.wrapper_ops")
+    config_cls = getattr(wrapper_ops, "CuEquivarianceConfig", None)
+    if config_cls is None:
+        msg = "enable_cueq=True requires a MACE version with CuEquivarianceConfig"
+        raise RuntimeError(msg)
+    device_type = getattr(env.DEVICE, "type", str(env.DEVICE))
+    config = config_cls(
+        enabled=True,
+        layout="ir_mul",
+        group="O3_e3nn",
+        optimize_all=True,
+        conv_fusion=(device_type == "cuda"),
+    )
+    if not getattr(config, "enabled", False):
+        msg = (
+            "enable_cueq=True requires cuequivariance, cuequivariance-torch, "
+            "and cuequivariance-ops-torch-cu12/cu11 to be installed"
+        )
+        raise RuntimeError(msg)
+    return config
 
 
 if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
@@ -279,6 +306,7 @@ def _make_mace_network(
     std: float,
     radial_MLP: list[int],
     radial_type: str,
+    enable_cueq: bool,
     script_model: bool,
 ) -> torch.nn.Module:
     optimization_defaults = None
@@ -308,12 +336,22 @@ def _make_mace_network(
             atomic_inter_shift=0.0,
             radial_MLP=radial_MLP,
             radial_type=radial_type,
+            cueq_config=_make_cueq_config(enable_cueq),
         ).to(env.DEVICE)
     finally:
         if optimization_defaults is not None:
             e3nn.set_optimization_defaults(**optimization_defaults)
     if script_model:
-        return script(model)
+        try:
+            return script(model)
+        except Exception as exc:
+            if not enable_cueq:
+                raise
+            warnings.warn(
+                "Falling back to eager MACE submodel because cuEquivariance "
+                f"could not be scripted: {exc}",
+                stacklevel=2,
+            )
     return model
 
 
@@ -425,6 +463,7 @@ class MaceModel(BaseModel):
         radial_MLP: list[int] = [64, 64, 64],  # noqa: B006
         std: float = 1,
         avg_num_neighbors: float | None = None,
+        enable_cueq: bool = False,
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
         super().__init__(**kwargs)
@@ -447,6 +486,7 @@ class MaceModel(BaseModel):
             "radial_MLP": radial_MLP,
             "std": std,
             "avg_num_neighbors": avg_num_neighbors,
+            "enable_cueq": enable_cueq,
         }
         self.type_map = type_map
         self.ntypes = len(type_map)
@@ -487,6 +527,7 @@ class MaceModel(BaseModel):
             std=std,
             radial_MLP=radial_MLP,
             radial_type=radial_type,
+            enable_cueq=enable_cueq,
             script_model=True,
         )
         self.atomic_numbers = atomic_numbers
@@ -1279,6 +1320,7 @@ class MaceModel(BaseModel):
             std=self.params["std"],
             radial_MLP=self.params["radial_MLP"],
             radial_type=self.params["radial_type"],
+            enable_cueq=self.params["enable_cueq"],
             script_model=False,
         )
         raw_model.load_state_dict(scripted_model.state_dict())
