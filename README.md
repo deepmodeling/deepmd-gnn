@@ -44,6 +44,7 @@ cd deepmd-gnn
 #### Python interface plugin
 
 Python 3.10 or above is required. A C++ compiler that supports C++ 17 is required.
+NVCC is required to build CUDA OPs.
 
 ```sh
 pip install .
