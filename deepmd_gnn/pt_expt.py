@@ -16,7 +16,7 @@ def _register() -> None:
     if _is_partially_initialized(
         "deepmd_gnn.mace",
         "MaceModel",
-    ) or _is_partially_initialized("deepmd_gnn.nequip", "NequipModel"):
+    ):
         return
 
     from deepmd.pt_expt.model.model import (  # noqa: PLC0415
@@ -24,10 +24,10 @@ def _register() -> None:
     )
 
     from deepmd_gnn.mace import MaceModel  # noqa: PLC0415
-    from deepmd_gnn.nequip import NequipModel  # noqa: PLC0415
 
+    # NeQuIP 0.6/e3nn specializes atom and edge counts during torch.export.
+    # Keep pt_expt registration limited to models with dynamic-shape export.
     ExportableBaseModel.register("mace")(MaceModel)
-    ExportableBaseModel.register("nequip")(NequipModel)
 
 
 _register()

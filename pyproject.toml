@@ -28,8 +28,8 @@ dependencies = [
     "torch>=2.10",
     "deepmd-kit[torch]>=3.0.0",
     "mace-torch>=0.3.5",
-    "nequip",
-    "e3nn==0.4.4",
+    "nequip<0.7",
+    "e3nn",
     "dargs",
 ]
 requires-python = ">=3.10"
@@ -46,7 +46,6 @@ nequip = "deepmd_gnn.pt:load"
 
 [project.entry-points."deepmd.pt_expt"]
 mace = "deepmd_gnn.pt_expt:load"
-nequip = "deepmd_gnn.pt_expt:load"
 
 [project.urls]
 repository = "https://gitlab.com/RutgersLBSR/deepmd-gnn"
@@ -135,8 +134,8 @@ test-command = [
 ]
 build = ["cp312-*"]
 skip = ["*-win32", "*-manylinux_i686", "*-musllinux*"]
-manylinux-x86_64-image = "manylinux_2_28"
-manylinux-aarch64-image = "manylinux_2_28"
+manylinux-x86_64-image = "quay.io/manylinux_cuda/manylinux_2_28_x86_64_cuda12_9:latest"
+manylinux-aarch64-image = "quay.io/manylinux_cuda/manylinux_2_28_aarch64_cuda12_9:latest"
 
 [tool.cibuildwheel.macos]
 repair-wheel-command = """delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} --ignore-missing-dependencies"""

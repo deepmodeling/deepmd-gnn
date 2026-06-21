@@ -5,8 +5,16 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+import pytest
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def skip_cuda_pt_expt_aoti_if_requested() -> None:
+    """Skip pt_expt AOTI packaging in CUDA CI when the runner cannot compile it."""
+    if os.environ.get("DEEPMD_GNN_SKIP_CUDA_PT_EXPT_AOTI") == "1":
+        pytest.skip("pt_expt AOTI packaging is covered by the CPU workflow")
 
 
 def register_pt_expt_plugin_for_cli(work_dir: Path) -> None:

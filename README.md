@@ -12,7 +12,7 @@ Supported packages and models include:
 - [MACE](https://github.com/ACEsuit/mace) (PyTorch version)
 - [NequIP](https://github.com/mir-group/nequip) (PyTorch version)
 
-After [installing the plugin](#installation), you can train the GNN models using DeePMD-kit, run active learning cycles for the GNN models using [DP-GEN](https://github.com/deepmodeling/dpgen), perform simulations with the MACE model using molecular dynamic packages supported by DeePMD-kit, such as [LAMMPS](https://github.com/lammps/lammps) and [AMBER](https://ambermd.org/).
+After [installing the plugin](#installation), you can train the GNN models using DeePMD-kit, run active learning cycles for the GNN models using [DP-GEN](https://github.com/deepmodeling/dpgen), and perform simulations with MACE and NequIP models using molecular dynamic packages supported by DeePMD-kit, such as [LAMMPS](https://github.com/lammps/lammps) and [AMBER](https://ambermd.org/).
 You can follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/) to train the GNN models using its PyTorch backend, after using the specific [model parameters](#parameters).
 
 ## Credits
@@ -44,6 +44,7 @@ cd deepmd-gnn
 #### Python interface plugin
 
 Python 3.10 or above is required. A C++ compiler that supports C++ 17 is required.
+NVCC is required to build CUDA OPs.
 
 ```sh
 pip install .
@@ -86,29 +87,25 @@ dp --pt freeze
 A frozen model file named `frozen_model.pth` will be generated. You can use it in the MD packages or other interfaces.
 For details, follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/).
 
-### Running LAMMPS + MACE with period boundary conditions
+### Running LAMMPS + GNN models with period boundary conditions
 
 GNN models use message passing neural networks,
 so the neighbor list built with traditional cutoff radius will not work,
 since the ghost atoms also need to build neighbor list.
-For NequIP, the model requests the neighbor list with a cutoff radius of $r_c \times N_{L}$,
-where $r_c$ is set by `r_max` and $N_L$ is set by `num_layers`,
-and rebuilds the neighbor list for ghost atoms.
-However, this approach is very inefficient.
-
-The MACE model works like a regular DeePMD-kit message-passing model.
+The MACE and NequIP models work like regular DeePMD-kit message-passing models.
 No extra environment variable is needed when freezing the model.
-It advertises message passing to DeePMD-kit, so LAMMPS can use the regular
+They advertise message passing to DeePMD-kit, so LAMMPS can use the regular
 neighbor list with a cutoff radius of $r_c$ and DeePMD-kit communicates
 the ghost-atom features through MPI between message-passing layers.
 This requires a DeePMD-kit build whose LAMMPS/PyTorch interface provides
 the message-passing communication op, `border_op`.
 
-The non-MPI mapping approach is still available for the MACE model
-(note: NequIP doesn't support such approach), but it does not support MPI.
-Request the mapping when using LAMMPS (also requires DeePMD-kit v3.0.0rc0 or above).
-By using the mapping, the ghost atoms will be mapped to the real atoms,
-so the regular neighbor list with a cutoff radius of $r_c$ can be used.
+When `border_op` communication is available, DeePMD-kit/LAMMPS uses that
+MPI-capable path. The atom-map path is a serial fallback for runs that do not
+receive a DeePMD message-passing `comm_dict`; it maps ghost atoms to their
+corresponding real atoms on the same process and is not a substitute for MPI
+communication. Request the mapping when using this fallback in LAMMPS
+(also requires DeePMD-kit v3.0.0rc0 or above).
 
 ```lammps
 atom_modify map array

@@ -12,6 +12,7 @@ import pytest
 
 from tests._pt_expt import (
     pt_expt_cli_env,
+    skip_cuda_pt_expt_aoti_if_requested,
 )
 
 
@@ -99,9 +100,9 @@ def test_e2e_training(input_fn) -> None:
     "input_fn",
     [
         "mace.json",
-        "nequip.json",
     ],
 )
 def test_e2e_pt_expt_training_exports_pt2(input_fn) -> None:
     """Test training and freezing exportable models for LAMMPS."""
+    skip_cuda_pt_expt_aoti_if_requested()
     _run_e2e_training(input_fn, "--pt-expt", "model.pt2")

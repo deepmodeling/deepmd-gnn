@@ -1301,6 +1301,7 @@ class MaceModel(BaseModel):
             script_model=False,
         )
         raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model.to(extended_coord.device)
         raw_model.train(scripted_model.training)
 
         def fn(
@@ -1391,6 +1392,7 @@ class MaceModel(BaseModel):
             script_model=False,
         )
         raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model.to(extended_coord.device)
         raw_model.train(scripted_model.training)
 
         def fn(
