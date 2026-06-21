@@ -176,6 +176,38 @@ def _insert_border_communication_modules(model: GraphModel, num_layers: int) -> 
             model.model_input_fields.append(key)
 
 
+def _make_nequip_network(params: dict[str, Any], ntypes: int) -> GraphModel:
+    nequip_model = model_from_config(
+        {
+            "model_builders": ["EnergyModel"],
+            "avg_num_neighbors": params["sel"],
+            "chemical_symbols": params["type_map"],
+            "num_types": ntypes,
+            "r_max": params["r_max"],
+            "num_layers": params["num_layers"],
+            "l_max": params["l_max"],
+            "num_features": params["num_features"],
+            "nonlinearity_type": params["nonlinearity_type"],
+            "parity": params["parity"],
+            "num_basis": params["num_basis"],
+            "BesselBasis_trainable": params["BesselBasis_trainable"],
+            "PolynomialCutoff_p": params["PolynomialCutoff_p"],
+            "invariant_layers": params["invariant_layers"],
+            "invariant_neurons": params["invariant_neurons"],
+            "use_sc": params["use_sc"],
+            "irreps_edge_sh": params["irreps_edge_sh"],
+            "feature_irreps_hidden": params["feature_irreps_hidden"],
+            "chemical_embedding_irreps_out": params["chemical_embedding_irreps_out"],
+            "conv_to_output_hidden_irreps_out": params[
+                "conv_to_output_hidden_irreps_out"
+            ],
+            "model_dtype": params["precision"],
+        },
+    )
+    _insert_border_communication_modules(nequip_model, params["num_layers"])
+    return nequip_model
+
+
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
     try:
         stat_mod = importlib.import_module("deepmd.dpmodel.utils.stat")
@@ -321,32 +353,7 @@ class NequipModel(BaseModel):
                 self.mm_types.append(ii)
 
         self.rcut = r_max
-        nequip_model = model_from_config(
-            {
-                "model_builders": ["EnergyModel"],
-                "avg_num_neighbors": sel,
-                "chemical_symbols": type_map,
-                "num_types": self.ntypes,
-                "r_max": r_max,
-                "num_layers": num_layers,
-                "l_max": l_max,
-                "num_features": num_features,
-                "nonlinearity_type": nonlinearity_type,
-                "parity": parity,
-                "num_basis": num_basis,
-                "BesselBasis_trainable": BesselBasis_trainable,
-                "PolynomialCutoff_p": PolynomialCutoff_p,
-                "invariant_layers": invariant_layers,
-                "invariant_neurons": invariant_neurons,
-                "use_sc": use_sc,
-                "irreps_edge_sh": irreps_edge_sh,
-                "feature_irreps_hidden": feature_irreps_hidden,
-                "chemical_embedding_irreps_out": chemical_embedding_irreps_out,
-                "conv_to_output_hidden_irreps_out": conv_to_output_hidden_irreps_out,
-                "model_dtype": precision,
-            },
-        )
-        _insert_border_communication_modules(nequip_model, num_layers)
+        nequip_model = _make_nequip_network(self.params, self.ntypes)
         self.model = script(nequip_model.to(env.DEVICE))
         self.register_buffer(
             "e0",
@@ -1016,6 +1023,10 @@ class NequipModel(BaseModel):
             make_fx_kwargs["tracing_mode"] = "real"
             make_fx_kwargs.pop("_allow_non_fake_inputs", None)
         model = self
+        scripted_model = self.model
+        raw_model = _make_nequip_network(self.params, self.ntypes).to(self.e0.device)
+        raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model.train(scripted_model.training)
 
         def fn(
             extended_coord: torch.Tensor,
@@ -1040,6 +1051,7 @@ class NequipModel(BaseModel):
             )
 
         self._use_exportable_edge_index = True
+        self.model = raw_model
         try:
             return make_fx(fn, **make_fx_kwargs)(
                 extended_coord,
@@ -1051,6 +1063,7 @@ class NequipModel(BaseModel):
                 charge_spin,
             )
         finally:
+            self.model = scripted_model
             self._use_exportable_edge_index = False
 
     def serialize(self) -> dict:
