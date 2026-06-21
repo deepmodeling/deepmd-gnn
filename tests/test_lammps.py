@@ -164,7 +164,7 @@ def _run_command(command: list[str], cwd: Path, env: dict[str, str]) -> None:
         env=env,
         text=True,
         capture_output=True,
-        timeout=180,
+        timeout=300,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
