@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Tests for DeePMD-kit's PyTorch exportable backend integration."""
 
+import sys
+import types
+
 import pytest
 import torch
 from deepmd.pt.model.model.model import (
@@ -15,9 +18,15 @@ from deepmd.pt_expt.utils.serialization import (
 )
 
 import deepmd_gnn.pt
-import deepmd_gnn.pt_expt  # noqa: F401
+import deepmd_gnn.pt_expt
 from deepmd_gnn.mace import MaceModel
 from deepmd_gnn.nequip import NequipModel
+
+
+def test_pt_expt_registration_defers_during_partial_mace_import(monkeypatch) -> None:
+    """Registration is skipped while the MACE module is partially initialized."""
+    monkeypatch.setitem(sys.modules, "deepmd_gnn.mace", types.ModuleType("mace"))
+    deepmd_gnn.pt_expt._register()  # noqa: SLF001
 
 
 def test_pt_and_pt_expt_entry_points_register_models() -> None:
