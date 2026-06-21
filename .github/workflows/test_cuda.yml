@@ -28,6 +28,8 @@ jobs:
       # PyTorch 2.11 cu128/cu129 wheels do not include kernels for the V100 runners (CC 7.0).
       UV_TORCH_BACKEND: cu126
       CMAKE_ARGS: -DDEEPMD_GNN_WITH_CUDA=ON
+      # V100/Triton fails pt_expt AOTI packaging; CPU CI still covers pt_expt freeze.
+      DEEPMD_GNN_SKIP_CUDA_PT_EXPT_AOTI: "1"
     if: >-
       github.repository_owner == 'deepmodeling' &&
       (

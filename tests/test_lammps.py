@@ -18,6 +18,7 @@ import pytest
 
 from tests._pt_expt import (
     pt_expt_cli_env,
+    skip_cuda_pt_expt_aoti_if_requested,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -180,6 +181,7 @@ def _freeze_model(tmp_path: Path, model_name: str, backend_flag: str) -> Path:
     env.setdefault("OMP_NUM_THREADS", "1")
     _configure_mpi_runtime_env(env)
     if backend_flag == "--pt-expt":
+        skip_cuda_pt_expt_aoti_if_requested()
         env = pt_expt_cli_env(work_dir, env)
     _run_command(
         [sys.executable, "-m", "deepmd", backend_flag, "train", input_path.name],
