@@ -19,6 +19,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WATER_DATA = REPO_ROOT / "tests" / "data"
 MACE_INPUT = REPO_ROOT / "tests" / "mace.json"
+NEQUIP_INPUT = REPO_ROOT / "tests" / "nequip.json"
+MODEL_INPUTS = {
+    "mace": MACE_INPUT,
+    "nequip": NEQUIP_INPUT,
+}
 SIX_ATOM_BOX = np.array([0.0, 13.0, 0.0, 13.0, 0.0, 13.0, 0.0, 0.0, 0.0])
 SIX_ATOM_COORD = np.array(
     [
@@ -144,20 +149,21 @@ def _run_command(command: list[str], cwd: Path, env: dict[str, str]) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _freeze_mace_model(tmp_path: Path) -> Path:
-    work_dir = tmp_path / "model"
+def _freeze_model(tmp_path: Path, model_name: str) -> Path:
+    input_path = MODEL_INPUTS[model_name]
+    work_dir = tmp_path / f"{model_name}_model"
     shutil.copytree(WATER_DATA, work_dir / "data")
-    shutil.copy(MACE_INPUT, work_dir / "mace.json")
+    shutil.copy(input_path, work_dir / input_path.name)
 
     env = os.environ.copy()
     env.setdefault("OMP_NUM_THREADS", "1")
     _run_command(
-        [sys.executable, "-m", "deepmd", "--pt", "train", "mace.json"],
+        [sys.executable, "-m", "deepmd", "--pt", "train", input_path.name],
         work_dir,
         env,
     )
 
-    model_file = work_dir / "model.pth"
+    model_file = work_dir / f"{model_name}.pth"
     _run_command(
         [sys.executable, "-m", "deepmd", "--pt", "freeze", "-o", str(model_file)],
         work_dir,
@@ -312,11 +318,12 @@ def _read_step_zero_pe(log_file: Path) -> float:
 
 
 @pytest.mark.lammps
-def test_lammps_runs_six_atom_mace_model(tmp_path: Path) -> None:
-    """Run one LAMMPS step with a frozen MACE model through DeePMD-kit."""
+@pytest.mark.parametrize("model_name", list(MODEL_INPUTS))
+def test_lammps_runs_six_atom_gnn_model(tmp_path: Path, model_name: str) -> None:
+    """Run one LAMMPS step with a frozen GNN model through DeePMD-kit."""
     _ensure_lammps_available()
     lammps_env = _lammps_env()
-    model_file = _freeze_mace_model(tmp_path)
+    model_file = _freeze_model(tmp_path, model_name)
 
     data_file = tmp_path / "water.lmp"
     input_file = tmp_path / "in.lammps"
@@ -331,12 +338,16 @@ def test_lammps_runs_six_atom_mace_model(tmp_path: Path) -> None:
 
 @pytest.mark.lammps
 @pytest.mark.mpi
-def test_lammps_mpi_matches_single_rank_six_atom_mace_model(tmp_path: Path) -> None:
-    """Run frozen MACE through DeePMD-kit with two MPI ranks."""
+@pytest.mark.parametrize("model_name", list(MODEL_INPUTS))
+def test_lammps_mpi_matches_single_rank_six_atom_gnn_model(
+    tmp_path: Path,
+    model_name: str,
+) -> None:
+    """Run a frozen GNN model through DeePMD-kit with two MPI ranks."""
     _ensure_lammps_available()
     _ensure_mpi_lammps_available()
     lammps_env = _lammps_env()
-    model_file = _freeze_mace_model(tmp_path)
+    model_file = _freeze_model(tmp_path, model_name)
 
     data_file = tmp_path / "water.lmp"
     single_input = tmp_path / "in.single.lammps"
