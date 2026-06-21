@@ -20,7 +20,6 @@ from deepmd.pt.utils import (
     env,
 )
 from deepmd.pt.utils.nlist import (
-    build_neighbor_list,
     extend_input_and_build_neighbor_list,
 )
 from deepmd.pt.utils.stat import (
@@ -45,9 +44,122 @@ from deepmd.utils.version import (
 from e3nn.util.jit import (
     script,
 )
+from nequip.data import (
+    AtomicDataDict,
+)
 from nequip.model import model_from_config
+from nequip.nn import (
+    GraphModel,
+    GraphModuleMixin,
+)
 
+import deepmd_gnn.op  # noqa: F401
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+
+if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
+
+    def border_op(
+        _argument0: torch.Tensor,
+        _argument1: torch.Tensor,
+        _argument2: torch.Tensor,
+        _argument3: torch.Tensor,
+        _argument4: torch.Tensor,
+        _argument5: torch.Tensor,
+        _argument6: torch.Tensor,
+        _argument7: torch.Tensor,
+        _argument8: torch.Tensor,
+    ) -> list[torch.Tensor]:
+        """TorchScript placeholder used when DeePMD's PT op is not loaded."""
+        msg = (
+            "border_op is unavailable. Build/load DeePMD-kit's PyTorch OP "
+            "library before running MPI message-passing inference."
+        )
+        raise NotImplementedError(msg)
+
+    torch.ops.deepmd.border_op = border_op
+
+
+_COMM_SEND_LIST_KEY = "_deepmd_gnn_send_list"
+_COMM_SEND_PROC_KEY = "_deepmd_gnn_send_proc"
+_COMM_RECV_PROC_KEY = "_deepmd_gnn_recv_proc"
+_COMM_SEND_NUM_KEY = "_deepmd_gnn_send_num"
+_COMM_RECV_NUM_KEY = "_deepmd_gnn_recv_num"
+_COMM_COMMUNICATOR_KEY = "_deepmd_gnn_communicator"
+_COMM_NLOC_KEY = "_deepmd_gnn_nloc"
+_COMM_NGHOST_KEY = "_deepmd_gnn_nghost"
+_COMM_KEYS = [
+    _COMM_SEND_LIST_KEY,
+    _COMM_SEND_PROC_KEY,
+    _COMM_RECV_PROC_KEY,
+    _COMM_SEND_NUM_KEY,
+    _COMM_RECV_NUM_KEY,
+    _COMM_COMMUNICATOR_KEY,
+    _COMM_NLOC_KEY,
+    _COMM_NGHOST_KEY,
+]
+
+
+class _DeepMDBorderCommunication(GraphModuleMixin, torch.nn.Module):
+    """Communicate NequIP node features between message-passing layers."""
+
+    def __init__(self, irreps_in: dict[str, Any]) -> None:
+        super().__init__()
+        irreps_with_comm = dict(irreps_in)
+        for key in _COMM_KEYS:
+            irreps_with_comm[key] = None
+        self._init_irreps(irreps_in=irreps_with_comm, irreps_out={})
+
+    def forward(self, data: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Communicate local node features to ghost slots when comm data is present."""
+        if "_deepmd_gnn_nloc" not in data:
+            return data
+
+        nloc_tensor = data["_deepmd_gnn_nloc"]
+        nghost_tensor = data["_deepmd_gnn_nghost"]
+        nloc = int(nloc_tensor.item())
+        nghost = int(nghost_tensor.item())
+
+        node_feats = data[AtomicDataDict.NODE_FEATURES_KEY][:nloc]
+        if nghost > 0:
+            node_feats = torch.nn.functional.pad(
+                node_feats,
+                (0, 0, 0, nghost),
+                value=0.0,
+            )
+
+        ret = torch.ops.deepmd.border_op(
+            data["_deepmd_gnn_send_list"],
+            data["_deepmd_gnn_send_proc"],
+            data["_deepmd_gnn_recv_proc"],
+            data["_deepmd_gnn_send_num"],
+            data["_deepmd_gnn_recv_num"],
+            node_feats,
+            data["_deepmd_gnn_communicator"],
+            nloc_tensor,
+            nghost_tensor,
+        )
+        data[AtomicDataDict.NODE_FEATURES_KEY] = ret[0]
+        return data
+
+
+def _insert_border_communication_modules(model: GraphModel, num_layers: int) -> None:
+    """Insert DeePMD border communication after NequIP convolution layers."""
+    if num_layers <= 1:
+        return
+
+    graph = model.model
+    for layer_idx in range(num_layers - 1):
+        conv_name = f"layer{layer_idx}_convnet"
+        comm_name = f"layer{layer_idx}_deepmd_comm"
+        conv_module = graph._modules[conv_name]  # noqa: SLF001
+        graph.insert(
+            name=comm_name,
+            module=_DeepMDBorderCommunication(conv_module.irreps_out),
+            after=conv_name,
+        )
+    for key in _COMM_KEYS:
+        if key not in model.model_input_fields:
+            model.model_input_fields.append(key)
 
 
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
@@ -195,33 +307,33 @@ class NequipModel(BaseModel):
                 self.mm_types.append(ii)
 
         self.rcut = r_max
-        self.model = script(
-            model_from_config(
-                {
-                    "model_builders": ["EnergyModel"],
-                    "avg_num_neighbors": sel,
-                    "chemical_symbols": type_map,
-                    "num_types": self.ntypes,
-                    "r_max": r_max,
-                    "num_layers": num_layers,
-                    "l_max": l_max,
-                    "num_features": num_features,
-                    "nonlinearity_type": nonlinearity_type,
-                    "parity": parity,
-                    "num_basis": num_basis,
-                    "BesselBasis_trainable": BesselBasis_trainable,
-                    "PolynomialCutoff_p": PolynomialCutoff_p,
-                    "invariant_layers": invariant_layers,
-                    "invariant_neurons": invariant_neurons,
-                    "use_sc": use_sc,
-                    "irreps_edge_sh": irreps_edge_sh,
-                    "feature_irreps_hidden": feature_irreps_hidden,
-                    "chemical_embedding_irreps_out": chemical_embedding_irreps_out,
-                    "conv_to_output_hidden_irreps_out": conv_to_output_hidden_irreps_out,
-                    "model_dtype": precision,
-                },
-            ).to(env.DEVICE),
+        nequip_model = model_from_config(
+            {
+                "model_builders": ["EnergyModel"],
+                "avg_num_neighbors": sel,
+                "chemical_symbols": type_map,
+                "num_types": self.ntypes,
+                "r_max": r_max,
+                "num_layers": num_layers,
+                "l_max": l_max,
+                "num_features": num_features,
+                "nonlinearity_type": nonlinearity_type,
+                "parity": parity,
+                "num_basis": num_basis,
+                "BesselBasis_trainable": BesselBasis_trainable,
+                "PolynomialCutoff_p": PolynomialCutoff_p,
+                "invariant_layers": invariant_layers,
+                "invariant_neurons": invariant_neurons,
+                "use_sc": use_sc,
+                "irreps_edge_sh": irreps_edge_sh,
+                "feature_irreps_hidden": feature_irreps_hidden,
+                "chemical_embedding_irreps_out": chemical_embedding_irreps_out,
+                "conv_to_output_hidden_irreps_out": conv_to_output_hidden_irreps_out,
+                "model_dtype": precision,
+            },
         )
+        _insert_border_communication_modules(nequip_model, num_layers)
+        self.model = script(nequip_model.to(env.DEVICE))
         self.register_buffer(
             "e0",
             torch.zeros(
@@ -323,7 +435,7 @@ class NequipModel(BaseModel):
     @torch.jit.export
     def get_rcut(self) -> float:
         """Get the cut-off radius."""
-        return self.rcut * self.num_layers
+        return self.rcut
 
     @torch.jit.export
     def get_type_map(self) -> list[str]:
@@ -379,7 +491,7 @@ class NequipModel(BaseModel):
     @torch.jit.export
     def has_message_passing(self) -> bool:
         """Return whether the descriptor has message passing."""
-        return False
+        return self.num_layers > 1
 
     @torch.jit.export
     def forward(
@@ -485,17 +597,19 @@ class NequipModel(BaseModel):
             The communication dictionary.
         """
         nloc = nlist.shape[1]
-        nf, nall = extended_atype.shape
-        # recalculate nlist for ghost atoms
-        if self.num_layers > 1 and nloc < nall:
-            nlist = build_neighbor_list(
-                extended_coord.view(nf, -1),
-                extended_atype,
-                nall,
-                self.rcut * self.num_layers,
-                self.sel,
-                distinguish_types=False,
+        _nf, nall = extended_atype.shape
+        if (
+            self.num_layers > 1
+            and nloc < nall
+            and mapping is None
+            and comm_dict is None
+        ):
+            msg = (
+                "Multi-layer NequIP lower inference requires either comm_dict "
+                "from DeePMD-kit message-passing communication or a mapping "
+                "from extended atoms to local atoms."
             )
+            raise ValueError(msg)
         model_ret = self.forward_lower_common(
             nloc,
             extended_coord,
@@ -562,9 +676,6 @@ class NequipModel(BaseModel):
         if aparam is not None:
             msg = "aparam is unsupported"
             raise ValueError(msg)
-        if comm_dict is not None:
-            msg = "comm_dict is unsupported"
-            raise ValueError(msg)
         nlist = nlist.to(torch.int64)
         extended_atype = extended_atype.to(torch.int64)
         nall = extended_coord.shape[1]
@@ -596,7 +707,9 @@ class NequipModel(BaseModel):
             dtype=default_dtype,
             device=extended_coord_ff.device,
         )
-        if box is not None and mapping is not None and nloc < nall:
+        has_mapping = False
+        if comm_dict is None and mapping is not None and nloc < nall:
+            has_mapping = True
             mapping_ff = mapping.view(nf * nall) + torch.arange(
                 0,
                 nf * nall,
@@ -608,6 +721,26 @@ class NequipModel(BaseModel):
             shifts = shifts_atoms[edge_index[1]] - shifts_atoms[edge_index[0]]
             edge_index = mapping_ff[edge_index]
             input_dict["edge_index"] = edge_index
+        if comm_dict is not None:
+            if nf != 1:
+                msg = "NequIP comm_dict lower inference only supports one frame"
+                raise ValueError(msg)
+            input_dict["_deepmd_gnn_send_list"] = comm_dict["send_list"]
+            input_dict["_deepmd_gnn_send_proc"] = comm_dict["send_proc"]
+            input_dict["_deepmd_gnn_recv_proc"] = comm_dict["recv_proc"]
+            input_dict["_deepmd_gnn_send_num"] = comm_dict["send_num"]
+            input_dict["_deepmd_gnn_recv_num"] = comm_dict["recv_num"]
+            input_dict["_deepmd_gnn_communicator"] = comm_dict["communicator"]
+            input_dict["_deepmd_gnn_nloc"] = torch.tensor(
+                nloc,
+                dtype=torch.int32,
+                device=torch.device("cpu"),
+            )
+            input_dict["_deepmd_gnn_nghost"] = torch.tensor(
+                nall - nloc,
+                dtype=torch.int32,
+                device=torch.device("cpu"),
+            )
 
         batch = (
             torch.arange(
@@ -664,6 +797,19 @@ class NequipModel(BaseModel):
             input_dict["edge_cell_shift"] = edge_cell_shift
         else:
             input_dict["pos"] = extended_coord_ff
+            if has_mapping:
+                input_dict["batch"] = batch
+                input_dict["ptr"] = ptr
+                input_dict["cell"] = (
+                    torch.eye(
+                        3,
+                        dtype=extended_coord_ff.dtype,
+                        device=extended_coord_ff.device,
+                    )
+                    .unsqueeze(0)
+                    .expand(nf, 3, 3)
+                )
+                input_dict["edge_cell_shift"] = shifts
 
         ret = self.model.forward(
             input_dict,

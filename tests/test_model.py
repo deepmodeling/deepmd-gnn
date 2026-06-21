@@ -1180,9 +1180,9 @@ class TestNequipModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: ig
         with torch.jit.optimized_execution(should_optimize=False):
             cls._script_module = torch.jit.script(cls.module)
         cls.output_def = cls.module.translated_output_def()
-        cls.expected_has_message_passing = False
+        cls.expected_has_message_passing = True
         cls.expected_sel_type = []
         cls.expected_dim_fparam = 0
         cls.expected_dim_aparam = 0
-        cls.expected_nmpnn = 2
+        cls.expected_nmpnn = 1
         cls.supports_atomic_virial = True
