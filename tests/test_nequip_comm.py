@@ -42,6 +42,19 @@ def test_nequip_serializes_with_nequip_type() -> None:
     assert model.serialize()["type"] == "nequip"
 
 
+def test_nequip_export_metadata_defaults() -> None:
+    """NeQuIP advertises the default optional backend metadata."""
+    model = _make_nequip_model()
+
+    assert model.atomic_output_def() is not None
+    assert model.has_default_fparam() is False
+    assert model.get_default_fparam() is None
+    assert model.has_chg_spin_ebd() is False
+    assert model.get_dim_chg_spin() == 0
+    assert model.has_default_chg_spin() is False
+    assert model.get_default_chg_spin() is None
+
+
 def test_nequip_comm_branch_matches_regular_lower_without_ghosts(monkeypatch) -> None:
     """Identity communication should reproduce the regular lower path."""
 

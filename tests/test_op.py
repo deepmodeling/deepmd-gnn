@@ -4,7 +4,7 @@ import pytest
 import torch
 
 import deepmd_gnn.op  # noqa: F401
-from deepmd_gnn.edge import dense_edge_index
+from deepmd_gnn.edge import _fake_dense_edge_index, dense_edge_index
 
 
 def test_one_frame() -> None:
@@ -163,3 +163,25 @@ def test_cuda_matches_cpu() -> None:
     torch.testing.assert_close(edge_index.cpu(), expected_edge_index)
     assert legacy_edge_index.is_cuda
     torch.testing.assert_close(legacy_edge_index.cpu(), expected_edge_index)
+
+
+def test_fake_dense_edge_index_handles_2d_nlist() -> None:
+    """Fake dense edge op should preserve the flattened 2D nlist size."""
+    nlist = torch.empty((3, 4), dtype=torch.int64)
+    atype = torch.empty((3,), dtype=torch.int64)
+    mm_types = torch.empty((2,), dtype=torch.int64)
+
+    edge_index, edge_mask = _fake_dense_edge_index(nlist, atype, mm_types)
+
+    assert edge_index.shape == (12, 2)
+    assert edge_mask.shape == (12,)
+
+
+def test_fake_dense_edge_index_rejects_invalid_rank() -> None:
+    """Fake dense edge op should match the real op rank contract."""
+    nlist = torch.empty((1, 2, 3, 4), dtype=torch.int64)
+    atype = torch.empty((1, 2), dtype=torch.int64)
+    mm_types = torch.empty((2,), dtype=torch.int64)
+
+    with pytest.raises(ValueError, match="nlist must be 2D or 3D"):
+        _fake_dense_edge_index(nlist, atype, mm_types)
