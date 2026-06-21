@@ -52,9 +52,23 @@ from nequip.nn import (
     GraphModel,
     GraphModuleMixin,
 )
+from torch.fx.experimental.proxy_tensor import (
+    make_fx,
+)
 
 import deepmd_gnn.op  # noqa: F401
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+from deepmd_gnn.edge import dense_edge_index
+
+
+def _pad_nlist_for_export(nlist: torch.Tensor) -> torch.Tensor:
+    pad = -torch.ones(
+        (*nlist.shape[:2], 1),
+        dtype=nlist.dtype,
+        device=nlist.device,
+    )
+    return torch.cat([nlist, pad], dim=-1)
+
 
 if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
 
@@ -160,6 +174,38 @@ def _insert_border_communication_modules(model: GraphModel, num_layers: int) -> 
     for key in _COMM_KEYS:
         if key not in model.model_input_fields:
             model.model_input_fields.append(key)
+
+
+def _make_nequip_network(params: dict[str, Any], ntypes: int) -> GraphModel:
+    nequip_model = model_from_config(
+        {
+            "model_builders": ["EnergyModel"],
+            "avg_num_neighbors": params["sel"],
+            "chemical_symbols": params["type_map"],
+            "num_types": ntypes,
+            "r_max": params["r_max"],
+            "num_layers": params["num_layers"],
+            "l_max": params["l_max"],
+            "num_features": params["num_features"],
+            "nonlinearity_type": params["nonlinearity_type"],
+            "parity": params["parity"],
+            "num_basis": params["num_basis"],
+            "BesselBasis_trainable": params["BesselBasis_trainable"],
+            "PolynomialCutoff_p": params["PolynomialCutoff_p"],
+            "invariant_layers": params["invariant_layers"],
+            "invariant_neurons": params["invariant_neurons"],
+            "use_sc": params["use_sc"],
+            "irreps_edge_sh": params["irreps_edge_sh"],
+            "feature_irreps_hidden": params["feature_irreps_hidden"],
+            "chemical_embedding_irreps_out": params["chemical_embedding_irreps_out"],
+            "conv_to_output_hidden_irreps_out": params[
+                "conv_to_output_hidden_irreps_out"
+            ],
+            "model_dtype": params["precision"],
+        },
+    )
+    _insert_border_communication_modules(nequip_model, params["num_layers"])
+    return nequip_model
 
 
 def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
@@ -307,32 +353,7 @@ class NequipModel(BaseModel):
                 self.mm_types.append(ii)
 
         self.rcut = r_max
-        nequip_model = model_from_config(
-            {
-                "model_builders": ["EnergyModel"],
-                "avg_num_neighbors": sel,
-                "chemical_symbols": type_map,
-                "num_types": self.ntypes,
-                "r_max": r_max,
-                "num_layers": num_layers,
-                "l_max": l_max,
-                "num_features": num_features,
-                "nonlinearity_type": nonlinearity_type,
-                "parity": parity,
-                "num_basis": num_basis,
-                "BesselBasis_trainable": BesselBasis_trainable,
-                "PolynomialCutoff_p": PolynomialCutoff_p,
-                "invariant_layers": invariant_layers,
-                "invariant_neurons": invariant_neurons,
-                "use_sc": use_sc,
-                "irreps_edge_sh": irreps_edge_sh,
-                "feature_irreps_hidden": feature_irreps_hidden,
-                "chemical_embedding_irreps_out": chemical_embedding_irreps_out,
-                "conv_to_output_hidden_irreps_out": conv_to_output_hidden_irreps_out,
-                "model_dtype": precision,
-            },
-        )
-        _insert_border_communication_modules(nequip_model, num_layers)
+        nequip_model = _make_nequip_network(self.params, self.ntypes)
         self.model = script(nequip_model.to(env.DEVICE))
         self.register_buffer(
             "e0",
@@ -432,6 +453,10 @@ class NequipModel(BaseModel):
             ],
         )
 
+    def atomic_output_def(self) -> FittingOutputDef:
+        """Get the atomic output def used by the exportable backend."""
+        return self.fitting_output_def()
+
     @torch.jit.export
     def get_rcut(self) -> float:
         """Get the cut-off radius."""
@@ -453,9 +478,37 @@ class NequipModel(BaseModel):
         return 0
 
     @torch.jit.export
+    def has_default_fparam(self) -> bool:
+        """Return whether default frame parameters are available."""
+        return False
+
+    def get_default_fparam(self) -> torch.Tensor | None:
+        """Get the default frame parameters."""
+        return None
+
+    @torch.jit.export
     def get_dim_aparam(self) -> int:
         """Get the number (dimension) of atomic parameters of this atomic model."""
         return 0
+
+    @torch.jit.export
+    def has_chg_spin_ebd(self) -> bool:
+        """Return whether charge-spin embedding is enabled."""
+        return False
+
+    @torch.jit.export
+    def get_dim_chg_spin(self) -> int:
+        """Get the dimension of charge-spin input."""
+        return 0
+
+    @torch.jit.export
+    def has_default_chg_spin(self) -> bool:
+        """Return whether default charge-spin values are available."""
+        return False
+
+    def get_default_chg_spin(self) -> torch.Tensor | None:
+        """Get the default charge-spin values."""
+        return None
 
     @torch.jit.export
     def get_sel_type(self) -> list[int]:
@@ -501,6 +554,7 @@ class NequipModel(BaseModel):
         box: torch.Tensor | None = None,
         fparam: torch.Tensor | None = None,
         aparam: torch.Tensor | None = None,
+        charge_spin: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
     ) -> dict[str, torch.Tensor]:
         """Forward pass of the model.
@@ -520,6 +574,7 @@ class NequipModel(BaseModel):
         do_atomic_virial : bool, optional
             Whether to compute atomic virial.
         """
+        _ = charge_spin
         nloc = atype.shape[1]
         extended_coord, extended_atype, mapping, nlist = (
             extend_input_and_build_neighbor_list(
@@ -574,6 +629,7 @@ class NequipModel(BaseModel):
         aparam: torch.Tensor | None = None,
         do_atomic_virial: bool = False,
         comm_dict: dict[str, torch.Tensor] | None = None,
+        charge_spin: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Forward lower pass of the model.
 
@@ -596,6 +652,7 @@ class NequipModel(BaseModel):
         comm_dict : dict[str, torch.Tensor], optional
             The communication dictionary.
         """
+        _ = charge_spin
         nloc = nlist.shape[1]
         _nf, nall = extended_atype.shape
         if (
@@ -682,11 +739,23 @@ class NequipModel(BaseModel):
 
         extended_coord_ff = extended_coord.view(nf * nall, 3)
         extended_atype_ff = extended_atype.view(nf * nall)
-        edge_index = torch.ops.deepmd_gnn.edge_index(
-            nlist,
-            extended_atype,
-            torch.tensor(self.mm_types, dtype=torch.int64, device="cpu"),
-        )
+        edge_mask = torch.jit.annotate(torch.Tensor | None, None)
+        if torch.jit.is_scripting() or not getattr(
+            self,
+            "_use_exportable_edge_index",
+            False,
+        ):
+            edge_index = torch.ops.deepmd_gnn.edge_index(
+                nlist,
+                extended_atype,
+                torch.tensor(self.mm_types, dtype=torch.int64, device="cpu"),
+            )
+        else:
+            edge_index, edge_mask = dense_edge_index(
+                nlist,
+                extended_atype,
+                self.mm_types,
+            )
         edge_index = edge_index.T
         # Nequip and MACE have different defination for edge_index
         edge_index = edge_index[[1, 0]]
@@ -721,6 +790,11 @@ class NequipModel(BaseModel):
             shifts = shifts_atoms[edge_index[1]] - shifts_atoms[edge_index[0]]
             edge_index = mapping_ff[edge_index]
             input_dict["edge_index"] = edge_index
+        if edge_mask is not None:
+            edge_mask = edge_mask.to(device=shifts.device)
+            far_shifts = torch.zeros_like(shifts)
+            far_shifts[:, 0] = self.rcut * 10.0 + 10.0
+            shifts = torch.where(edge_mask.unsqueeze(-1), shifts, far_shifts)
         if comm_dict is not None:
             if nf != 1:
                 msg = "NequIP comm_dict lower inference only supports one frame"
@@ -797,7 +871,7 @@ class NequipModel(BaseModel):
             input_dict["edge_cell_shift"] = edge_cell_shift
         else:
             input_dict["pos"] = extended_coord_ff
-            if has_mapping:
+            if edge_mask is not None or has_mapping:
                 input_dict["batch"] = batch
                 input_dict["ptr"] = ptr
                 input_dict["cell"] = (
@@ -906,12 +980,98 @@ class NequipModel(BaseModel):
             "energy_derv_c": atomic_virial.to(extended_coord_.dtype),
         }
 
+    def forward_common_lower(
+        self,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: torch.Tensor | None = None,
+        fparam: torch.Tensor | None = None,
+        aparam: torch.Tensor | None = None,
+        charge_spin: torch.Tensor | None = None,
+        do_atomic_virial: bool = False,
+    ) -> dict[str, torch.Tensor]:
+        """Forward lower pass with internal DeePMD output names."""
+        _ = charge_spin
+        return self.forward_lower_common(
+            nlist.shape[1],
+            extended_coord,
+            extended_atype,
+            nlist,
+            mapping=mapping,
+            fparam=fparam,
+            aparam=aparam,
+            do_atomic_virial=do_atomic_virial,
+            comm_dict=None,
+        )
+
+    def forward_common_lower_exportable(
+        self,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: torch.Tensor | None = None,
+        fparam: torch.Tensor | None = None,
+        aparam: torch.Tensor | None = None,
+        charge_spin: torch.Tensor | None = None,
+        do_atomic_virial: bool = False,
+        **make_fx_kwargs: object,
+    ) -> torch.nn.Module:
+        """Trace ``forward_common_lower`` for ``torch.export`` serialization."""
+        make_fx_kwargs = make_fx_kwargs.copy()
+        if make_fx_kwargs.get("tracing_mode") == "symbolic":
+            make_fx_kwargs["tracing_mode"] = "real"
+            make_fx_kwargs.pop("_allow_non_fake_inputs", None)
+        model = self
+        scripted_model = self.model
+        raw_model = _make_nequip_network(self.params, self.ntypes).to(self.e0.device)
+        raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model.train(scripted_model.training)
+
+        def fn(
+            extended_coord: torch.Tensor,
+            extended_atype: torch.Tensor,
+            nlist: torch.Tensor,
+            mapping: torch.Tensor | None,
+            fparam: torch.Tensor | None,
+            aparam: torch.Tensor | None,
+            charge_spin: torch.Tensor | None,
+        ) -> dict[str, torch.Tensor]:
+            extended_coord = extended_coord.detach().requires_grad_(requires_grad=True)
+            nlist = _pad_nlist_for_export(nlist)
+            return model.forward_common_lower(
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping=mapping,
+                fparam=fparam,
+                aparam=aparam,
+                charge_spin=charge_spin,
+                do_atomic_virial=do_atomic_virial,
+            )
+
+        self._use_exportable_edge_index = True
+        self.model = raw_model
+        try:
+            return make_fx(fn, **make_fx_kwargs)(
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping,
+                fparam,
+                aparam,
+                charge_spin,
+            )
+        finally:
+            self.model = scripted_model
+            self._use_exportable_edge_index = False
+
     def serialize(self) -> dict:
         """Serialize the model."""
         return {
             "@class": "Model",
             "@version": 1,
-            "type": "mace",
+            "type": "nequip",
             **self.params,
             "@variables": {
                 **{
@@ -925,7 +1085,7 @@ class NequipModel(BaseModel):
     def deserialize(cls, data: dict) -> "NequipModel":
         """Deserialize the model."""
         data = data.copy()
-        if not (data.pop("@class") == "Model" and data.pop("type") == "mace"):
+        if not (data.pop("@class") == "Model" and data.pop("type") == "nequip"):
             msg = "data is not a serialized NequipModel"
             raise ValueError(msg)
         check_version_compatibility(data.pop("@version"), 1, 1)

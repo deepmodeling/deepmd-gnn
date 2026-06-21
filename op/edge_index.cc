@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
+#include <tuple>
 #include <vector>
 
 #ifdef DEEPMD_GNN_WITH_CUDA
@@ -66,6 +67,42 @@ ts::Tensor to_cpu_contiguous(const ts::Tensor& tensor) {
   return to_device_contiguous(tensor, ts::Device(th::DeviceType::CPU));
 }
 
+bool type_in_mm(const int64_t atom_type, const int64_t* mm, const int64_t nmm) {
+  for (int64_t mm_idx = 0; mm_idx < nmm; mm_idx++) {
+    if (atom_type == mm[mm_idx]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename Fn>
+void visit_edges(const EdgeIndexShape& shape,
+                 const int64_t* nlist,
+                 const int64_t* atype,
+                 const int64_t* mm,
+                 const int64_t nmm,
+                 Fn&& fn) {
+  for (int64_t ff = 0; ff < shape.nf; ff++) {
+    for (int64_t ii = 0; ii < shape.nloc; ii++) {
+      for (int64_t jj = 0; jj < shape.nnei; jj++) {
+        const int64_t idx = ff * shape.nloc * shape.nnei + ii * shape.nnei + jj;
+        const int64_t kk = nlist[idx];
+        const int64_t safe_kk = std::max<int64_t>(kk, 0);
+        const int64_t global_kk = ff * shape.nall + safe_kk;
+        const int64_t global_ii = ff * shape.nall + ii;
+        bool valid = kk >= 0;
+        if (valid && nmm > 0) {
+          const bool in_mm1 = type_in_mm(atype[global_ii], mm, nmm);
+          const bool in_mm2 = type_in_mm(atype[global_kk], mm, nmm);
+          valid = !(in_mm1 && in_mm2);
+        }
+        fn(idx, global_kk, global_ii, valid);
+      }
+    }
+  }
+}
+
 ts::Tensor edge_index_cpu_kernel(const ts::Tensor& nlist_tensor,
                                  const ts::Tensor& atype_tensor,
                                  const ts::Tensor& mm_tensor) {
@@ -81,39 +118,15 @@ ts::Tensor edge_index_cpu_kernel(const ts::Tensor& nlist_tensor,
 
   std::vector<int64_t> edge_index;
   edge_index.reserve(shape.nf * shape.nloc * shape.nnei * 2);
-
-  for (int64_t ff = 0; ff < shape.nf; ff++) {
-    for (int64_t ii = 0; ii < shape.nloc; ii++) {
-      for (int64_t jj = 0; jj < shape.nnei; jj++) {
-        const int64_t idx = ff * shape.nloc * shape.nnei + ii * shape.nnei + jj;
-        const int64_t kk = nlist[idx];
-        if (kk < 0) {
-          continue;
-        }
-        const int64_t global_kk = ff * shape.nall + kk;
-        const int64_t global_ii = ff * shape.nall + ii;
-        bool in_mm1 = false;
-        for (int64_t mm_idx = 0; mm_idx < nmm; mm_idx++) {
-          if (atype[global_ii] == mm[mm_idx]) {
-            in_mm1 = true;
-            break;
-          }
-        }
-        bool in_mm2 = false;
-        for (int64_t mm_idx = 0; mm_idx < nmm; mm_idx++) {
-          if (atype[global_kk] == mm[mm_idx]) {
-            in_mm2 = true;
-            break;
-          }
-        }
-        if (in_mm1 && in_mm2) {
-          continue;
-        }
-        edge_index.push_back(global_kk);
-        edge_index.push_back(global_ii);
-      }
-    }
-  }
+  visit_edges(shape, nlist, atype, mm, nmm,
+              [&edge_index](const int64_t /*idx*/, const int64_t global_kk,
+                            const int64_t global_ii, const bool valid) {
+                if (!valid) {
+                  return;
+                }
+                edge_index.push_back(global_kk);
+                edge_index.push_back(global_ii);
+              });
 
   const int64_t edge_size = static_cast<int64_t>(edge_index.size() / 2);
   ts::Tensor edge_index_tensor =
@@ -159,15 +172,62 @@ ts::Tensor edge_index_kernel(const ts::Tensor& nlist_tensor,
 #endif
   return edge_index_cpu_kernel(nlist_tensor, atype_tensor, mm_tensor);
 }
+
+std::tuple<ts::Tensor, ts::Tensor> dense_edge_index_kernel(
+    const ts::Tensor& nlist_tensor,
+    const ts::Tensor& atype_tensor,
+    const ts::Tensor& mm_tensor) {
+  ts::Tensor nlist_tensor_ = to_cpu_contiguous(nlist_tensor);
+  ts::Tensor atype_tensor_ = to_cpu_contiguous(atype_tensor);
+  ts::Tensor mm_tensor_ = to_cpu_contiguous(mm_tensor);
+
+  const EdgeIndexShape shape = validate_shape(nlist_tensor_, atype_tensor_);
+  const int64_t nmm = mm_tensor_.size(0);
+  const int64_t* nlist = nlist_tensor_.const_data_ptr<int64_t>();
+  const int64_t* atype = atype_tensor_.const_data_ptr<int64_t>();
+  const int64_t* mm = mm_tensor_.const_data_ptr<int64_t>();
+  const int64_t dense_edge_size = shape.nf * shape.nloc * shape.nnei;
+
+  ts::Tensor edge_index_tensor =
+      ts::empty({dense_edge_size, 2}, th::ScalarType::Long, th::Layout::Strided,
+                ts::Device(th::DeviceType::CPU));
+  ts::Tensor edge_mask_tensor =
+      ts::empty({dense_edge_size}, th::ScalarType::Bool, th::Layout::Strided,
+                ts::Device(th::DeviceType::CPU));
+  int64_t* edge_index = edge_index_tensor.mutable_data_ptr<int64_t>();
+  bool* edge_mask = edge_mask_tensor.mutable_data_ptr<bool>();
+
+  visit_edges(
+      shape, nlist, atype, mm, nmm,
+      [edge_index, edge_mask](const int64_t idx, const int64_t global_kk,
+                              const int64_t global_ii, const bool valid) {
+        edge_index[2 * idx] = global_kk;
+        edge_index[2 * idx + 1] = global_ii;
+        edge_mask[idx] = valid;
+      });
+
+  return std::make_tuple(ts::to(edge_index_tensor, nlist_tensor.device()),
+                         ts::to(edge_mask_tensor, nlist_tensor.device()));
+}
 }  // namespace
 
 STABLE_TORCH_LIBRARY(deepmd_gnn, m) {
   m.def("edge_index(Tensor nlist, Tensor atype, Tensor mm) -> Tensor");
+  m.def(
+      "dense_edge_index(Tensor nlist, Tensor atype, Tensor mm) -> (Tensor, "
+      "Tensor)");
+}
+
+STABLE_TORCH_LIBRARY_IMPL(deepmd_gnn, CompositeExplicitAutograd, m) {
   m.impl("edge_index", TORCH_BOX(edge_index_kernel));
+  m.impl("dense_edge_index", TORCH_BOX(dense_edge_index_kernel));
 }
 
 // Compatibility with old models frozen by deepmd_mace package.
 STABLE_TORCH_LIBRARY(deepmd_mace, m) {
   m.def("mace_edge_index(Tensor nlist, Tensor atype, Tensor mm) -> Tensor");
+}
+
+STABLE_TORCH_LIBRARY_IMPL(deepmd_mace, CompositeExplicitAutograd, m) {
   m.impl("mace_edge_index", TORCH_BOX(edge_index_kernel));
 }

@@ -1,0 +1,2 @@
+# MACE pins e3nn 0.4.4; use uv overrides to keep deepmd-kit>=3.2 with it.
+e3nn==0.4.4

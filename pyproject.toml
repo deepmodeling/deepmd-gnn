@@ -28,7 +28,7 @@ dependencies = [
     "torch>=2.10",
     "deepmd-kit[torch]>=3.0.0",
     "mace-torch>=0.3.5",
-    "nequip",
+    "nequip<0.7",
     "e3nn",
     "dargs",
 ]
@@ -41,8 +41,11 @@ keywords = [
 deepmd-gnn = "deepmd_gnn.cli:main"
 
 [project.entry-points."deepmd.pt"]
-mace = "deepmd_gnn.mace:MaceModel"
-nequip = "deepmd_gnn.nequip:NequipModel"
+mace = "deepmd_gnn.pt:load"
+nequip = "deepmd_gnn.pt:load"
+
+[project.entry-points."deepmd.pt_expt"]
+mace = "deepmd_gnn.pt_expt:load"
 
 [project.urls]
 repository = "https://gitlab.com/RutgersLBSR/deepmd-gnn"

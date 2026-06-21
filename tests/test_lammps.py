@@ -16,6 +16,11 @@ from typing import NoReturn
 import numpy as np
 import pytest
 
+from tests._pt_expt import (
+    pt_expt_cli_env,
+    skip_cuda_pt_expt_aoti_if_requested,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WATER_DATA = REPO_ROOT / "tests" / "data"
 MACE_INPUT = REPO_ROOT / "tests" / "mace.json"
@@ -24,6 +29,11 @@ MODEL_INPUTS = {
     "mace": MACE_INPUT,
     "nequip": NEQUIP_INPUT,
 }
+MODEL_CASES = [
+    pytest.param("mace", "--pt", id="mace-pt"),
+    pytest.param("mace", "--pt-expt", id="mace-pt-expt"),
+    pytest.param("nequip", "--pt", id="nequip-pt"),
+]
 MODEL_MPI_PE_TOL = {
     "mace": {"atol": 1e-8, "rtol": 0.0},
     "nequip": {"atol": 1e-4, "rtol": 1e-6},
@@ -55,6 +65,12 @@ def _prepend_env_path(env: dict[str, str], name: str, *paths: Path | str) -> Non
     if current:
         entries.append(current)
     env[name] = os.pathsep.join(entries)
+
+
+def _configure_mpi_runtime_env(env: dict[str, str]) -> None:
+    # GitHub-hosted Azure runners expose a MANA interface that MPICH/UCX may
+    # select as ud_verbs, but that path fails during MPI_Init in this job.
+    env.setdefault("UCX_TLS", "tcp,self")
 
 
 def _deepmd_lib_dir() -> Path:
@@ -123,6 +139,7 @@ def _lammps_env() -> dict[str, str]:
     env.setdefault("OMP_NUM_THREADS", "1")
     env.setdefault("OMPI_ALLOW_RUN_AS_ROOT", "1")
     env.setdefault("OMPI_ALLOW_RUN_AS_ROOT_CONFIRM", "1")
+    _configure_mpi_runtime_env(env)
 
     if platform.system() == "Darwin":
         lib_env = "DYLD_FALLBACK_LIBRARY_PATH"
@@ -153,23 +170,29 @@ def _run_command(command: list[str], cwd: Path, env: dict[str, str]) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _freeze_model(tmp_path: Path, model_name: str) -> Path:
+def _freeze_model(tmp_path: Path, model_name: str, backend_flag: str) -> Path:
     input_path = MODEL_INPUTS[model_name]
-    work_dir = tmp_path / f"{model_name}_model"
+    backend_name = backend_flag.removeprefix("--").replace("-", "_")
+    work_dir = tmp_path / f"{model_name}_{backend_name}_model"
     shutil.copytree(WATER_DATA, work_dir / "data")
     shutil.copy(input_path, work_dir / input_path.name)
 
     env = os.environ.copy()
     env.setdefault("OMP_NUM_THREADS", "1")
+    _configure_mpi_runtime_env(env)
+    if backend_flag == "--pt-expt":
+        skip_cuda_pt_expt_aoti_if_requested()
+        env = pt_expt_cli_env(work_dir, env)
     _run_command(
-        [sys.executable, "-m", "deepmd", "--pt", "train", input_path.name],
+        [sys.executable, "-m", "deepmd", backend_flag, "train", input_path.name],
         work_dir,
         env,
     )
 
-    model_file = work_dir / f"{model_name}.pth"
+    model_suffix = "pt2" if backend_flag == "--pt-expt" else "pth"
+    model_file = work_dir / f"{model_name}.{model_suffix}"
     _run_command(
-        [sys.executable, "-m", "deepmd", "--pt", "freeze", "-o", str(model_file)],
+        [sys.executable, "-m", "deepmd", backend_flag, "freeze", "-o", str(model_file)],
         work_dir,
         env,
     )
@@ -226,6 +249,7 @@ def _write_lammps_input(
                 "units metal",
                 "boundary p p p",
                 "atom_style atomic",
+                "atom_modify map yes",
                 "neighbor 2.0 bin",
                 "neigh_modify every 1 delay 0 check yes",
                 *processor_commands,
@@ -241,6 +265,24 @@ def _write_lammps_input(
     )
 
 
+def _lammps_failure_message(
+    result: subprocess.CompletedProcess[str],
+    log_file: Path,
+) -> str:
+    log_text = log_file.read_text() if log_file.exists() else "<missing log file>"
+    return "\n".join(
+        [
+            f"LAMMPS exited with status {result.returncode}",
+            "=== stdout ===",
+            result.stdout,
+            "=== stderr ===",
+            result.stderr,
+            f"=== {log_file.name} ===",
+            log_text,
+        ],
+    )
+
+
 def _run_lammps(input_file: Path, log_file: Path, env: dict[str, str]) -> None:
     lmp = shutil.which("lmp") or shutil.which("lmp_serial")
     if lmp is not None:
@@ -253,7 +295,7 @@ def _run_lammps(input_file: Path, log_file: Path, env: dict[str, str]) -> None:
             timeout=120,
             check=False,
         )
-        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.returncode == 0, _lammps_failure_message(result, log_file)
         return
 
     try:
@@ -304,7 +346,7 @@ def _run_lammps_mpi(
         timeout=180,
         check=False,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 0, _lammps_failure_message(result, log_file)
 
 
 def _read_step_zero_pe(log_file: Path) -> float:
@@ -322,12 +364,16 @@ def _read_step_zero_pe(log_file: Path) -> float:
 
 
 @pytest.mark.lammps
-@pytest.mark.parametrize("model_name", list(MODEL_INPUTS))
-def test_lammps_runs_six_atom_gnn_model(tmp_path: Path, model_name: str) -> None:
+@pytest.mark.parametrize(("model_name", "backend_flag"), MODEL_CASES)
+def test_lammps_runs_six_atom_gnn_model(
+    tmp_path: Path,
+    model_name: str,
+    backend_flag: str,
+) -> None:
     """Run one LAMMPS step with a frozen GNN model through DeePMD-kit."""
     _ensure_lammps_available()
     lammps_env = _lammps_env()
-    model_file = _freeze_model(tmp_path, model_name)
+    model_file = _freeze_model(tmp_path, model_name, backend_flag)
 
     data_file = tmp_path / "water.lmp"
     input_file = tmp_path / "in.lammps"
@@ -342,16 +388,21 @@ def test_lammps_runs_six_atom_gnn_model(tmp_path: Path, model_name: str) -> None
 
 @pytest.mark.lammps
 @pytest.mark.mpi
-@pytest.mark.parametrize("model_name", list(MODEL_INPUTS))
+@pytest.mark.parametrize(("model_name", "backend_flag"), MODEL_CASES)
 def test_lammps_mpi_matches_single_rank_six_atom_gnn_model(
     tmp_path: Path,
     model_name: str,
+    backend_flag: str,
 ) -> None:
     """Run a frozen GNN model through DeePMD-kit with two MPI ranks."""
+    if backend_flag == "--pt-expt":
+        pytest.skip(
+            "multi-rank .pt2 LAMMPS requires a deepmd-kit with-comm artifact",
+        )
     _ensure_lammps_available()
     _ensure_mpi_lammps_available()
     lammps_env = _lammps_env()
-    model_file = _freeze_model(tmp_path, model_name)
+    model_file = _freeze_model(tmp_path, model_name, backend_flag)
 
     data_file = tmp_path / "water.lmp"
     single_input = tmp_path / "in.single.lammps"

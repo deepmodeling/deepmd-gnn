@@ -24,6 +24,12 @@ jobs:
   test_cuda:
     name: Test Python package on CUDA
     runs-on: gpu
+    env:
+      # PyTorch 2.11 cu128/cu129 wheels do not include kernels for the V100 runners (CC 7.0).
+      UV_TORCH_BACKEND: cu126
+      CMAKE_ARGS: -DDEEPMD_GNN_WITH_CUDA=ON
+      # V100/Triton fails pt_expt AOTI packaging; CPU CI still covers pt_expt freeze.
+      DEEPMD_GNN_SKIP_CUDA_PT_EXPT_AOTI: "1"
     if: >-
       github.repository_owner == 'deepmodeling' &&
       (
@@ -56,34 +62,32 @@ jobs:
             wget https://developer.download.nvidia.com/compute/cuda/repos/${OS_NAME}/x86_64/cuda-keyring_1.1-1_all.deb
             sudo dpkg -i cuda-keyring_1.1-1_all.deb
             sudo apt-get update
-            sudo apt-get -y install cuda-toolkit-12-9
-            echo "CUDA_PATH=/usr/local/cuda-12.9" >> "$GITHUB_ENV"
-            echo "/usr/local/cuda-12.9/bin" >> "$GITHUB_PATH"
+            sudo apt-get -y install cuda-toolkit-12-6
+            echo "CUDA_PATH=/usr/local/cuda-12.6" >> "$GITHUB_ENV"
+            echo "/usr/local/cuda-12.6/bin" >> "$GITHUB_PATH"
           fi
       - name: Install dependencies
-        run: |
-          uv pip install -e .[test] "deepmd-kit[torch,lmp,cpu]>=3.0.0" mpi4py mpich
+        run: uv pip install nox[uv]
+      - name: Test Python package on CUDA
+        run: nox -db uv -s tests
+        env:
+          CUDA_VISIBLE_DEVICES: 0
       - name: Check CUDA availability
         run: |
-          python - <<'PY'
+          .nox/tests/bin/python - <<'PY'
           import torch
           print(f"torch: {torch.__version__}")
           print(f"cuda available: {torch.cuda.is_available()}")
           if not torch.cuda.is_available():
-              raise SystemExit("CUDA is unavailable on the GPU runner")
+              raise SystemExit("CUDA is unavailable in the nox test environment")
           print(f"cuda device: {torch.cuda.get_device_name(0)}")
           PY
         env:
           CUDA_VISIBLE_DEVICES: 0
-      - name: Test Python package on CUDA
-        run: python -m pytest tests
-        env:
-          CUDA_VISIBLE_DEVICES: 0
       - name: Test LAMMPS on CUDA
-        run: python -m pytest -m lammps tests/test_lammps.py
+        run: nox -db uv -s lammps
         env:
           CUDA_VISIBLE_DEVICES: 0
-          DEEPMD_GNN_REQUIRE_LAMMPS: 1
 
   pass:
     name: Pass testing on CUDA
