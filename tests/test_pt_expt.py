@@ -15,6 +15,7 @@ from deepmd.pt_expt.model.model import (
 from deepmd.pt_expt.utils.serialization import (
     _build_dynamic_shapes,
     _make_sample_inputs,
+    _needs_with_comm_artifact,
 )
 
 import deepmd_gnn.pt
@@ -54,6 +55,22 @@ def test_mace_export_metadata_defaults() -> None:
     assert model.has_chg_spin_ebd() is False
     assert model.has_default_chg_spin() is False
     assert model.get_default_chg_spin() is None
+
+
+def test_mace_pt_expt_reports_with_comm_artifact_requirement() -> None:
+    """Multi-layer MACE exposes the descriptor hook used by pt2 export."""
+    model = MaceModel(
+        type_map=["O", "H"],
+        r_max=6.0,
+        sel=16,
+        hidden_irreps="16x0e",
+        num_interactions=2,
+    )
+
+    assert model.atomic_model is model
+    assert model.descriptor is model
+    assert model.has_message_passing_across_ranks()
+    assert _needs_with_comm_artifact(model)
 
 
 def test_mace_pt_expt_export_handles_dynamic_nloc(tmp_path) -> None:

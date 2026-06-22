@@ -87,6 +87,55 @@ dp --pt freeze
 A frozen model file named `frozen_model.pth` will be generated. You can use it in the MD packages or other interfaces.
 For details, follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/).
 
+### Exporting MACE models with the PyTorch exportable backend
+
+MACE models can also be trained and frozen with DeePMD-kit's PyTorch exportable
+backend (`pt_expt`):
+
+```sh
+dp --pt-expt train input.json
+dp --pt-expt freeze -o frozen_model.pt2
+```
+
+Use this path when you need a `.pt2` model for the DeePMD-kit/LAMMPS
+PyTorch exportable runtime. The `pt_expt` path currently supports MACE models;
+NequIP models should still use the regular `--pt` workflow.
+
+The `pt_expt` workflow requires DeePMD-kit 3.2.0 or later. Multi-layer MACE
+models include the extra communication artifact needed by LAMMPS/MPI inside the
+exported `.pt2` package, so the resulting file can be passed to LAMMPS in the
+same way as other DeePMD-kit frozen models.
+
+#### Training MACE with `torch.compile`
+
+MACE training through the `pt_expt` backend can use DeePMD-kit's native
+`torch.compile` path. Enable it in the `training` section:
+
+```json
+"training": {
+  "enable_compile": true
+}
+```
+
+Then run the regular exportable-backend training command:
+
+```sh
+dp --pt-expt train input.json
+```
+
+On a single RTX 5090, using the water example data with `sel = "auto"`,
+`hidden_irreps = "128x0e + 128x1o"`, `batch_size = 1`, and
+`disp_freq = 100`, a 2000-step run was used to sample the steady-state training
+speed:
+
+| mode            | steady avg after step 200 | speedup |
+| --------------- | ------------------------: | ------: |
+| eager `pt_expt` |             0.2030 s/step |   1.00x |
+| `torch.compile` |             0.1495 s/step |   1.36x |
+
+The first compiled step includes a one-time Inductor trace/compile cost
+(97.17 s in this run), which is amortized over normal long training jobs.
+
 ### Running LAMMPS + GNN models with period boundary conditions
 
 GNN models use message passing neural networks,

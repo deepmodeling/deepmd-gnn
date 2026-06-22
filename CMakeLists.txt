@@ -22,6 +22,8 @@ option(DEEPMD_GNN_BYPASS_TORCH_CUDA_CHECK
        "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable" ON)
 option(DEEPMD_GNN_LINK_TORCH_CUDA "Link the OP against PyTorch CUDA libraries"
        OFF)
+option(DEEPMD_GNN_DYNAMIC_CUDART
+       "Dynamically load the CUDA runtime library for CUDA OPs" ON)
 
 if((NOT BUILD_PY_IF) AND (NOT BUILD_CPP_IF))
   # nothing to do
@@ -68,9 +70,6 @@ if(DEEPMD_GNN_ENABLE_CUDA)
       CACHE BOOL
             "Bypass PyTorch CUDA toolkit discovery when nvcc is unavailable"
             FORCE)
-  set(DEEPMD_GNN_LINK_TORCH_CUDA
-      ON
-      CACHE BOOL "Link the OP against PyTorch CUDA libraries" FORCE)
   if(NOT DEFINED CMAKE_CUDA_COMPILER)
     set(CMAKE_CUDA_COMPILER ${DEEPMD_GNN_NVCC_EXECUTABLE})
   endif()
