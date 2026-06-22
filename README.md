@@ -123,17 +123,18 @@ Then run the regular exportable-backend training command:
 dp --pt-expt train input.json
 ```
 
-On a single RTX 5090, using `tests/mace.json` with `batch_size = 1` and
+On a single RTX 5090, using the water example data with `sel = "auto"`,
+`hidden_irreps = "128x0e + 128x1o"`, `batch_size = 1`, and
 `disp_freq = 100`, a 2000-step run was used to sample the steady-state training
 speed:
 
 | mode            | steady avg after step 200 | speedup |
 | --------------- | ------------------------: | ------: |
-| eager `pt_expt` |             0.0658 s/step |    1.0x |
-| `torch.compile` |             0.0313 s/step |    2.1x |
+| eager `pt_expt` |             0.2030 s/step |   1.00x |
+| `torch.compile` |             0.1495 s/step |   1.36x |
 
 The first compiled step includes a one-time Inductor trace/compile cost
-(64.36 s in this run), which is amortized over normal long training jobs.
+(97.17 s in this run), which is amortized over normal long training jobs.
 
 ### Running LAMMPS + GNN models with period boundary conditions
 
