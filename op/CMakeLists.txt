@@ -2,6 +2,16 @@ set(OP_SRC edge_index.cc)
 
 if(DEEPMD_GNN_ENABLE_CUDA)
   list(APPEND OP_SRC edge_index_cuda.cu)
+  if(DEEPMD_GNN_DYNAMIC_CUDART)
+    if(UNIX AND NOT APPLE)
+      add_subdirectory(cudart)
+    else()
+      message(
+        WARNING
+          "DEEPMD_GNN_DYNAMIC_CUDART is only supported on non-Apple UNIX platforms"
+      )
+    endif()
+  endif()
 endif()
 
 add_library(deepmd_gnn MODULE ${OP_SRC})
@@ -14,6 +24,10 @@ endif()
 if(DEEPMD_GNN_ENABLE_CUDA)
   target_compile_definitions(deepmd_gnn PRIVATE DEEPMD_GNN_WITH_CUDA)
   set_target_properties(deepmd_gnn PROPERTIES CUDA_STANDARD 17)
+  if(TARGET deepmd_gnn_cudart)
+    set_target_properties(deepmd_gnn PROPERTIES CUDA_RUNTIME_LIBRARY None)
+    target_link_libraries(deepmd_gnn PRIVATE deepmd_gnn_cudart ${CMAKE_DL_LIBS})
+  endif()
 endif()
 target_link_libraries(deepmd_gnn PRIVATE ${DEEPMD_GNN_TORCH_LIBRARIES})
 if(APPLE)
