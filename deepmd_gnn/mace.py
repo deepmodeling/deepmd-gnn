@@ -1,15 +1,12 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Wrapper for MACE models."""
 
-import importlib
 import json
 import sys
-import warnings
 from collections.abc import MutableMapping
 from copy import deepcopy
 from typing import Any, Optional, cast
 
-import e3nn
 import torch
 from deepmd.dpmodel.output_def import (
     FittingOutputDef,
@@ -22,7 +19,6 @@ from deepmd.pt.model.model.model import (
 from deepmd.pt.model.model.transform_output import (
     communicate_extended_output,
 )
-from deepmd.pt.utils import env
 from deepmd.pt.utils.nlist import (
     extend_input_and_build_neighbor_list,
 )
@@ -45,61 +41,33 @@ from deepmd.utils.path import (
 from deepmd.utils.version import (
     check_version_compatibility,
 )
-from e3nn import (
-    o3,
-)
-from e3nn.util.jit import (
-    script,
-)
-from mace.modules import (
-    ScaleShiftMACE,
-    gate_dict,
-    interaction_classes,
-)
 from torch.fx.experimental.proxy_tensor import (
     make_fx,
 )
 
 import deepmd_gnn.op  # noqa: F401
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+from deepmd_gnn.deepmd_ops import ensure_border_op_placeholder
 from deepmd_gnn.edge import dense_edge_index
-
-
-def _pad_nlist_for_export(nlist: torch.Tensor) -> torch.Tensor:
-    pad = -torch.ones(
-        (*nlist.shape[:2], 1),
-        dtype=nlist.dtype,
-        device=nlist.device,
-    )
-    return torch.cat([nlist, pad], dim=-1)
-
-
-def _make_cueq_config(enable_cueq: bool) -> Any | None:  # noqa: ANN401
-    """Build the MACE cuEquivariance config when requested."""
-    if not enable_cueq:
-        return None
-    wrapper_ops = importlib.import_module("mace.modules.wrapper_ops")
-    config_cls = getattr(wrapper_ops, "CuEquivarianceConfig", None)
-    if config_cls is None:
-        msg = "enable_cueq=True requires a MACE version with CuEquivarianceConfig"
-        raise RuntimeError(msg)
-    device_type = getattr(env.DEVICE, "type", str(env.DEVICE))
-    config = config_cls(
-        enabled=True,
-        layout="ir_mul",
-        group="O3_e3nn",
-        optimize_all=True,
-        conv_fusion=(device_type == "cuda"),
-    )
-    if not getattr(config, "enabled", False):
-        msg = (
-            "enable_cueq=True requires cuequivariance, cuequivariance-torch, "
-            "and cuequivariance-ops-torch-cu12/cu11 to be installed. "
-            "Install deepmd-gnn[cueq] for CUDA 12 or deepmd-gnn[cueq-cu11] "
-            "for CUDA 11."
-        )
-        raise RuntimeError(msg)
-    return config
+from deepmd_gnn.export import (
+    clear_export_guards_once as _clear_export_guards_once,
+)
+from deepmd_gnn.export import (
+    pad_nlist_for_export as _pad_nlist_for_export,
+)
+from deepmd_gnn.mace_network import (
+    disable_cueq_in_model_params as _disable_cueq_in_model_params,
+)
+from deepmd_gnn.mace_network import (
+    link_module_state as _link_module_state,
+)
+from deepmd_gnn.mace_network import (
+    make_mace_network as _make_mace_network,
+)
+from deepmd_gnn.mace_network import (
+    transfer_cueq_to_e3nn as _transfer_cueq_to_e3nn,
+)
+from deepmd_gnn.stat_compat import load_observed_type_stat_compat
 
 
 def _is_freeze_command() -> bool:
@@ -107,103 +75,12 @@ def _is_freeze_command() -> bool:
     return "freeze" in sys.argv[1:]
 
 
-def _disable_cueq_in_model_params(model_params: MutableMapping[str, Any]) -> bool:
-    """Disable MACE cuEquivariance flags in model definition metadata."""
-    changed = False
-    if model_params.get("type") == "mace" and model_params.get("enable_cueq"):
-        model_params["enable_cueq"] = False
-        changed = True
-    model_dict = model_params.get("model_dict")
-    if isinstance(model_dict, MutableMapping):
-        for sub_model_params in model_dict.values():
-            if isinstance(sub_model_params, MutableMapping):
-                changed |= _disable_cueq_in_model_params(sub_model_params)
-    return changed
-
-
-def _transfer_cueq_to_e3nn(
-    source_model: torch.nn.Module,
-    target_model: torch.nn.Module,
-    *,
-    hidden_irreps: str,
-    correlation: int,
-    num_interactions: int,
-) -> None:
-    """Transfer MACE cuEquivariance weights to an e3nn MACE model."""
-    from mace.cli.convert_cueq_e3nn import (  # noqa: PLC0415
-        transfer_weights,
-    )
-
-    num_product_irreps = len(o3.Irreps(hidden_irreps).slices()) - 1
-    use_reduced_cg = bool(getattr(source_model, "use_reduced_cg", True))
-    transfer_weights(
-        source_model,
-        target_model,
-        num_product_irreps,
-        correlation,
-        num_interactions,
-        use_reduced_cg,
-    )
-
-
-if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
-
-    def border_op(
-        _argument0: torch.Tensor,
-        _argument1: torch.Tensor,
-        _argument2: torch.Tensor,
-        _argument3: torch.Tensor,
-        _argument4: torch.Tensor,
-        _argument5: torch.Tensor,
-        _argument6: torch.Tensor,
-        _argument7: torch.Tensor,
-        _argument8: torch.Tensor,
-    ) -> list[torch.Tensor]:
-        """TorchScript placeholder used when DeePMD's PT op is not loaded."""
-        msg = (
-            "border_op is unavailable. Build/load DeePMD-kit's PyTorch OP "
-            "library before running MPI message-passing inference."
-        )
-        raise NotImplementedError(msg)
-
-    torch.ops.deepmd.border_op = border_op
-
-
-def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
-    try:
-        stat_mod = importlib.import_module("deepmd.dpmodel.utils.stat")
-    except ImportError:
-
-        def collect_observed_types(sampled, type_map) -> list[str]:  # noqa: ANN001
-            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-            _ = sampled, type_map
-            return []
-
-        def _restore_observed_type_from_file(stat_file_path):  # noqa: ANN001, ANN202
-            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-            _ = stat_file_path
-
-        def _save_observed_type_to_file(stat_file_path, observed_type):  # noqa: ANN001, ANN202
-            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-            _ = stat_file_path, observed_type
-
-        return (
-            _restore_observed_type_from_file,
-            _save_observed_type_to_file,
-            collect_observed_types,
-        )
-    else:
-        restore = stat_mod._restore_observed_type_from_file  # noqa: SLF001
-        save = stat_mod._save_observed_type_to_file  # noqa: SLF001
-        collect = stat_mod.collect_observed_types
-        return (restore, save, collect)
-
-
+ensure_border_op_placeholder()
 (
     _restore_observed_type_from_file,
     _save_observed_type_to_file,
     collect_observed_types,
-) = _load_observed_type_stat_compat()
+) = load_observed_type_stat_compat()
 
 ELEMENTS = [
     "H",
@@ -334,110 +211,6 @@ PeriodicTable = {
 }
 
 
-def _make_mace_network(
-    *,
-    r_max: float,
-    num_radial_basis: int,
-    num_cutoff_basis: int,
-    max_ell: int,
-    interaction: str,
-    num_interactions: int,
-    num_elements: int,
-    hidden_irreps: str,
-    atomic_numbers: list[int],
-    avg_num_neighbors: float,
-    pair_repulsion: bool,
-    distance_transform: str,
-    correlation: int,
-    gate: str,
-    MLP_irreps: str,
-    std: float,
-    radial_MLP: list[int],
-    radial_type: str,
-    enable_cueq: bool,
-    script_model: bool,
-) -> torch.nn.Module:
-    optimization_defaults = None
-    if not script_model:
-        optimization_defaults = e3nn.get_optimization_defaults()
-        e3nn.set_optimization_defaults(jit_script_fx=False)
-    try:
-        model = ScaleShiftMACE(
-            r_max=r_max,
-            num_bessel=num_radial_basis,
-            num_polynomial_cutoff=num_cutoff_basis,
-            max_ell=max_ell,
-            interaction_cls=interaction_classes[interaction],
-            num_interactions=num_interactions,
-            num_elements=num_elements,
-            hidden_irreps=o3.Irreps(hidden_irreps),
-            atomic_energies=torch.zeros(num_elements),  # pylint: disable=no-explicit-device,no-explicit-dtype
-            avg_num_neighbors=avg_num_neighbors,
-            atomic_numbers=atomic_numbers,
-            pair_repulsion=pair_repulsion,
-            distance_transform=distance_transform,
-            correlation=correlation,
-            gate=gate_dict[gate],
-            interaction_cls_first=interaction_classes["RealAgnosticInteractionBlock"],
-            MLP_irreps=o3.Irreps(MLP_irreps),
-            atomic_inter_scale=std,
-            atomic_inter_shift=0.0,
-            radial_MLP=radial_MLP,
-            radial_type=radial_type,
-            cueq_config=_make_cueq_config(enable_cueq),
-        ).to(env.DEVICE)
-    finally:
-        if optimization_defaults is not None:
-            e3nn.set_optimization_defaults(**optimization_defaults)
-    if script_model:
-        try:
-            return script(model)
-        except Exception as exc:
-            if not enable_cueq:
-                raise
-            warnings.warn(
-                "Falling back to eager MACE submodel because cuEquivariance "
-                f"could not be scripted: {exc}",
-                stacklevel=2,
-            )
-    return model
-
-
-def _set_module_state_tensor(
-    root: torch.nn.Module,
-    name: str,
-    tensor: torch.Tensor,
-) -> None:
-    if "." in name:
-        module_name, attr_name = name.rsplit(".", 1)
-        module = root.get_submodule(module_name)
-    else:
-        module = root
-        attr_name = name
-    setattr(module, attr_name, tensor)
-
-
-def _link_module_state(
-    target: torch.nn.Module,
-    source: torch.nn.Module,
-) -> None:
-    source_params = dict(source.named_parameters())
-    target_params = dict(target.named_parameters())
-    if set(source_params) != set(target_params):
-        msg = "scripted and raw MACE parameter names do not match"
-        raise RuntimeError(msg)
-    for name, param in source_params.items():
-        _set_module_state_tensor(target, name, param)
-
-    source_buffers = dict(source.named_buffers())
-    target_buffers = dict(target.named_buffers())
-    if set(source_buffers) != set(target_buffers):
-        msg = "scripted and raw MACE buffer names do not match"
-        raise RuntimeError(msg)
-    for name, buffer in source_buffers.items():
-        _set_module_state_tensor(target, name, buffer)
-
-
 @torch.jit.unused
 def _is_make_fx_fake_tensor(value: Any) -> bool:  # noqa: ANN401
     value_type = type(value)
@@ -445,49 +218,6 @@ def _is_make_fx_fake_tensor(value: Any) -> bool:  # noqa: ANN401
         value_type.__module__ == "torch._subclasses.fake_tensor"
         and value_type.__name__ == "FakeTensor"
     )
-
-
-def _clear_export_guards_once(traced: torch.nn.Module) -> None:
-    """Clear over-specialized guards from the next export of ``traced``."""
-    original_export = torch.export.export
-
-    def strip_deferred_assertions(exported: torch.export.ExportedProgram) -> None:
-        graph = exported.graph_module.graph
-        for node in list(graph.nodes):
-            if (
-                node.op == "call_function"
-                and node.target is torch.ops.aten._assert_scalar.default  # noqa: SLF001
-            ):
-                node.args = (True, node.args[1])
-        exported.graph_module.recompile()
-
-    def relax_range_constraints(exported: torch.export.ExportedProgram) -> None:
-        relaxed = exported.range_constraints.copy()
-        for symbol, value_range in exported.range_constraints.items():
-            try:
-                should_relax = bool(value_range.lower > 1)
-            except TypeError:
-                should_relax = False
-            if should_relax:
-                relaxed[symbol] = type(value_range)(1, value_range.upper)
-        exported._range_constraints = relaxed  # noqa: SLF001
-
-    def export_with_guard_cleanup(
-        *export_args: object,
-        **export_kwargs: object,
-    ) -> torch.export.ExportedProgram:
-        try:
-            exported = original_export(*export_args, **export_kwargs)
-            if export_args and export_args[0] is traced:
-                exported._guards_code = []  # noqa: SLF001
-                strip_deferred_assertions(exported)
-                relax_range_constraints(exported)
-            return exported
-        finally:
-            if torch.export.export is export_with_guard_cleanup:
-                torch.export.export = original_export
-
-    torch.export.export = export_with_guard_cleanup
 
 
 @BaseModel.register("mace")
@@ -893,10 +623,12 @@ class MaceModel(BaseModel):
             if stat_file_path is None:
                 observed = collect_observed_types(sampled_func(), self.type_map)
             else:
-                observed = _restore_observed_type_from_file(stat_file_path)
-                if observed is None:
+                restored_observed = _restore_observed_type_from_file(stat_file_path)
+                if restored_observed is None:
                     observed = collect_observed_types(sampled_func(), self.type_map)
                     _save_observed_type_to_file(stat_file_path, observed)
+                else:
+                    observed = restored_observed
             self._observed_type = observed
         bias_out, _ = compute_output_stats(
             sampled_func,
@@ -1245,12 +977,18 @@ class MaceModel(BaseModel):
         if aparam is not None:
             msg = "aparam is unsupported"
             raise ValueError(msg)
+
+        # DeePMD lower interface tensors arrive batched, but MACE consumes a
+        # flattened graph. Keep both layouts visible because forces and virials
+        # are reshaped back to DeePMD's output convention at the end.
         nlist = nlist.to(torch.int64)
         extended_atype = extended_atype.to(torch.int64)
         nall = extended_coord.shape[1]
 
         extended_atype_ff = extended_atype.reshape(-1)
         edge_mask = torch.jit.annotate(Optional[torch.Tensor], None)
+        # The runtime C++ op returns a sparse edge index; the exportable path
+        # uses dense tensor operations so torch.export can trace dynamic shapes.
         if torch.jit.is_scripting() or not getattr(
             self,
             "_use_exportable_edge_index",
@@ -1293,6 +1031,9 @@ class MaceModel(BaseModel):
             and mapping is not None
             and nloc < nall
         ):
+            # Without MPI communication, extended ghost atoms are mapped back to
+            # local atoms. The edge index and image shifts must be rewritten
+            # together or later MACE layers will see inconsistent geometry.
             mapping_ff = mapping.reshape(-1) + torch.arange(
                 0,
                 nf * nall,
@@ -1352,6 +1093,9 @@ class MaceModel(BaseModel):
         }
         displacement = torch.jit.annotate(Optional[torch.Tensor], None)
         if box is not None:
+            # DeePMD virials are obtained by differentiating a symmetric cell
+            # displacement. This mirrors DeePMD-kit model wrappers and avoids
+            # relying on MACE's own virial output convention.
             box_tensor = (
                 box.view(nf, 3, 3).to(default_dtype).to(extended_coord_ff.device)
             )
@@ -1394,6 +1138,9 @@ class MaceModel(BaseModel):
             )
             input_dict["shifts"] = shifts
 
+        # Choose the narrowest energy path that matches the caller: eager MACE
+        # for normal training/inference, module-by-module execution for export,
+        # and explicit feature exchange for MPI message passing.
         if (
             comm_dict is None
             and not torch.jit.is_scripting()
@@ -1445,6 +1192,9 @@ class MaceModel(BaseModel):
         )
         retain_graph = self.training or do_atomic_virial
 
+        # Forces always come from the coordinate gradient. When a box is
+        # available, the reduced virial comes from the displacement gradient;
+        # otherwise fall back to the position-force outer product.
         atomic_virial_fallback = torch.zeros(
             (nf, nall, 3, 3),
             dtype=extended_coord_ff.dtype,
