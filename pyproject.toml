@@ -51,6 +51,21 @@ mace = "deepmd_gnn.pt_expt:load"
 repository = "https://gitlab.com/RutgersLBSR/deepmd-gnn"
 
 [project.optional-dependencies]
+cueq = [
+    "cuequivariance>=0.10.0",
+    "cuequivariance-torch>=0.10.0",
+    "cuequivariance-ops-torch-cu12>=0.10.0",
+]
+cueq-cu11 = [
+    "cuequivariance>=0.10.0",
+    "cuequivariance-torch>=0.10.0",
+    "cuequivariance-ops-torch-cu11>=0.10.0",
+]
+cueq-cu12 = [
+    "cuequivariance>=0.10.0",
+    "cuequivariance-torch>=0.10.0",
+    "cuequivariance-ops-torch-cu12>=0.10.0",
+]
 test = [
     'pytest',
     'pytest-cov',

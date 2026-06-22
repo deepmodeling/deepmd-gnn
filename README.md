@@ -106,6 +106,59 @@ models include the extra communication artifact needed by LAMMPS/MPI inside the
 exported `.pt2` package, so the resulting file can be passed to LAMMPS in the
 same way as other DeePMD-kit frozen models.
 
+#### Training MACE with cuEquivariance
+
+MACE training can use cuEquivariance kernels when the installed MACE package
+provides `CuEquivarianceConfig` and the cuEquivariance runtime packages are
+available. Install the matching extra for the CUDA runtime used by PyTorch:
+
+```sh
+pip install "deepmd-gnn[cueq]"
+```
+
+The `cueq` extra installs the CUDA 12 cuEquivariance op package. For CUDA 11
+environments, use `deepmd-gnn[cueq-cu11]` instead. When installing from a
+source checkout, use `pip install ".[cueq]"` or `pip install ".[cueq-cu11]"`.
+
+Then enable it in the `model` section:
+
+```json
+"model": {
+  "type": "mace",
+  "enable_cueq": true
+}
+```
+
+Then train with either PyTorch backend:
+
+```sh
+dp --pt train input.json
+dp --pt-expt train input.json
+```
+
+On a single RTX 5090, using the water example data with `sel = "auto"`,
+`hidden_irreps = "128x0e + 128x1o"`, `batch_size = 1`, and
+`disp_freq = 100`, 2000-step runs were used to sample steady-state training
+speed:
+
+| backend        | cuEquivariance | steady avg after step 300 | speedup |
+| -------------- | -------------: | ------------------------: | ------: |
+| `dp --pt`      |             no |             0.1955 s/step |   1.00x |
+| `dp --pt`      |            yes |             0.1061 s/step |   1.84x |
+| `dp --pt-expt` |             no |             0.2025 s/step |   1.00x |
+| `dp --pt-expt` |            yes |             0.1007 s/step |   2.01x |
+
+The cuEquivariance effect is similar in both backends, but not bit-for-bit
+identical: in this run, the steady cuEquivariance speed differed by about 5%.
+The first cuEquivariance step includes a one-time kernel initialization cost
+(about 56 s in this run), which is amortized over long training jobs.
+
+cuEquivariance accelerates training only. When freezing a checkpoint whose
+input had `"enable_cueq": true`, deepmd-gnn disables cuEquivariance for the
+frozen model and converts the MACE weights back to the e3nn format. This lets
+both `dp --pt freeze` and `dp --pt-expt freeze` export normally, but the frozen
+model does not use cuEquivariance kernels.
+
 #### Training MACE with `torch.compile`
 
 MACE training through the `pt_expt` backend can use DeePMD-kit's native
@@ -135,6 +188,11 @@ speed:
 
 The first compiled step includes a one-time Inductor trace/compile cost
 (97.17 s in this run), which is amortized over normal long training jobs.
+
+Do not enable `enable_cueq` and `enable_compile` together for now. With
+cuEquivariance enabled, DeePMD-kit's symbolic `make_fx` compile trace fails in
+the cuEquivariance `uniform_1d` fake-tensor path with a data-dependent symbolic
+shape guard.
 
 ### Running LAMMPS + GNN models with period boundary conditions
 
@@ -190,7 +248,8 @@ Below is default values for the MACE model, most of which follows default values
   "radial_type": "bessel",
   "radial_MLP": [64, 64, 64],
   "std": 1.0,
-  "precision": "float32"
+  "precision": "float32",
+  "enable_cueq": false
 }
 ```
 
