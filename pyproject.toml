@@ -86,6 +86,11 @@ BUILD_CPP_IF = false
 [tool.setuptools_scm]
 version_file = "deepmd_gnn/_version.py"
 
+[tool.ruff]
+extend-exclude = [
+    "third_party/implib",
+]
+
 [tool.ruff.lint]
 select = [
     "ALL",
