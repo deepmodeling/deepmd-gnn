@@ -143,6 +143,12 @@ identical: in this run, the steady cuEquivariance speed differed by about 5%.
 The first cuEquivariance step includes a one-time kernel initialization cost
 (about 56 s in this run), which is amortized over long training jobs.
 
+cuEquivariance is currently supported for training only. Freezing a
+cuEquivariance checkpoint does not work in either backend: `dp --pt freeze`
+fails while TorchScript scripts the cuEquivariance `SegmentedPolynomial`, and
+`dp --pt-expt freeze` fails while symbolic `make_fx` traces the cuEquivariance
+`uniform_1d` fake-tensor path.
+
 #### Training MACE with `torch.compile`
 
 MACE training through the `pt_expt` backend can use DeePMD-kit's native
