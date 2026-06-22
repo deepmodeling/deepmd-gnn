@@ -106,6 +106,36 @@ models include the extra communication artifact needed by LAMMPS/MPI inside the
 exported `.pt2` package, so the resulting file can be passed to LAMMPS in the
 same way as other DeePMD-kit frozen models.
 
+#### Training MACE with `torch.compile`
+
+MACE training through the `pt_expt` backend can use DeePMD-kit's native
+`torch.compile` path. Enable it in the `training` section:
+
+```json
+"training": {
+  "enable_compile": true
+}
+```
+
+Then run the regular exportable-backend training command:
+
+```sh
+dp --pt-expt train input.json
+```
+
+On a single RTX 5090, using the water example data with `sel = "auto"`,
+`hidden_irreps = "128x0e + 128x1o"`, `batch_size = 1`, and
+`disp_freq = 100`, a 2000-step run was used to sample the steady-state training
+speed:
+
+| mode            | steady avg after step 200 | speedup |
+| --------------- | ------------------------: | ------: |
+| eager `pt_expt` |             0.2030 s/step |   1.00x |
+| `torch.compile` |             0.1495 s/step |   1.36x |
+
+The first compiled step includes a one-time Inductor trace/compile cost
+(97.17 s in this run), which is amortized over normal long training jobs.
+
 ### Running LAMMPS + GNN models with period boundary conditions
 
 GNN models use message passing neural networks,
