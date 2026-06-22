@@ -1,6 +1,5 @@
 """Nequip model."""
 
-import importlib
 from copy import deepcopy
 from typing import Any
 
@@ -58,39 +57,12 @@ from torch.fx.experimental.proxy_tensor import (
 
 import deepmd_gnn.op  # noqa: F401
 from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
+from deepmd_gnn.deepmd_ops import ensure_border_op_placeholder
 from deepmd_gnn.edge import dense_edge_index
+from deepmd_gnn.export import pad_nlist_for_export as _pad_nlist_for_export
+from deepmd_gnn.stat_compat import load_observed_type_stat_compat
 
-
-def _pad_nlist_for_export(nlist: torch.Tensor) -> torch.Tensor:
-    pad = -torch.ones(
-        (*nlist.shape[:2], 1),
-        dtype=nlist.dtype,
-        device=nlist.device,
-    )
-    return torch.cat([nlist, pad], dim=-1)
-
-
-if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
-
-    def border_op(
-        _argument0: torch.Tensor,
-        _argument1: torch.Tensor,
-        _argument2: torch.Tensor,
-        _argument3: torch.Tensor,
-        _argument4: torch.Tensor,
-        _argument5: torch.Tensor,
-        _argument6: torch.Tensor,
-        _argument7: torch.Tensor,
-        _argument8: torch.Tensor,
-    ) -> list[torch.Tensor]:
-        """TorchScript placeholder used when DeePMD's PT op is not loaded."""
-        msg = (
-            "border_op is unavailable. Build/load DeePMD-kit's PyTorch OP "
-            "library before running MPI message-passing inference."
-        )
-        raise NotImplementedError(msg)
-
-    torch.ops.deepmd.border_op = border_op
+ensure_border_op_placeholder()
 
 
 _COMM_SEND_LIST_KEY = "_deepmd_gnn_send_list"
@@ -208,41 +180,11 @@ def _make_nequip_network(params: dict[str, Any], ntypes: int) -> GraphModel:
     return nequip_model
 
 
-def _load_observed_type_stat_compat() -> tuple[Any, Any, Any]:
-    try:
-        stat_mod = importlib.import_module("deepmd.dpmodel.utils.stat")
-    except ImportError:
-
-        def collect_observed_types(sampled, type_map) -> list[str]:  # noqa: ANN001
-            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-            _ = sampled, type_map
-            return []
-
-        def _restore_observed_type_from_file(stat_file_path):  # noqa: ANN001, ANN202
-            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-            _ = stat_file_path
-
-        def _save_observed_type_to_file(stat_file_path, observed_type):  # noqa: ANN001, ANN202
-            """Compatibility fallback for older deepmd-kit without observed_type helpers."""
-            _ = stat_file_path, observed_type
-
-        return (
-            _restore_observed_type_from_file,
-            _save_observed_type_to_file,
-            collect_observed_types,
-        )
-    else:
-        restore = stat_mod._restore_observed_type_from_file  # noqa: SLF001
-        save = stat_mod._save_observed_type_to_file  # noqa: SLF001
-        collect = stat_mod.collect_observed_types
-        return (restore, save, collect)
-
-
 (
     _restore_observed_type_from_file,
     _save_observed_type_to_file,
     collect_observed_types,
-) = _load_observed_type_stat_compat()
+) = load_observed_type_stat_compat()
 
 
 @BaseModel.register("nequip")
@@ -417,10 +359,12 @@ class NequipModel(BaseModel):
             if stat_file_path is None:
                 observed = collect_observed_types(sampled_func(), self.type_map)
             else:
-                observed = _restore_observed_type_from_file(stat_file_path)
-                if observed is None:
+                restored_observed = _restore_observed_type_from_file(stat_file_path)
+                if restored_observed is None:
                     observed = collect_observed_types(sampled_func(), self.type_map)
                     _save_observed_type_to_file(stat_file_path, observed)
+                else:
+                    observed = restored_observed
             self._observed_type = observed
         bias_out, _ = compute_output_stats(
             sampled_func,
