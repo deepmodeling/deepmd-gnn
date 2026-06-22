@@ -123,17 +123,17 @@ Then run the regular exportable-backend training command:
 dp --pt-expt train input.json
 ```
 
-On a single RTX 5090, using `tests/mace.json` with `batch_size = 1`,
-`disp_freq = 100`, and `numb_steps = 2000`, the measured training timings were:
+On a single RTX 5090, using `tests/mace.json` with `batch_size = 1` and
+`disp_freq = 100`, a 2000-step run was used to sample the steady-state training
+speed:
 
-| mode            | total wall time | first compiled step | steady avg after step 200 |
-| --------------- | --------------: | ------------------: | ------------------------: |
-| eager `pt_expt` |        138.66 s |                 n/a |             0.0658 s/step |
-| `torch.compile` |        126.64 s |             64.36 s |             0.0313 s/step |
+| mode            | steady avg after step 200 | speedup |
+| --------------- | ------------------------: | ------: |
+| eager `pt_expt` |             0.0658 s/step |    1.0x |
+| `torch.compile` |             0.0313 s/step |    2.1x |
 
-The compiled run was about 1.09x faster end-to-end for this 2000-step run and
-about 2.1x faster after the one-time trace/compile cost. Short jobs may not
-benefit because the first compiled step includes the Inductor compile time.
+The first compiled step includes a one-time Inductor trace/compile cost
+(64.36 s in this run), which is amortized over normal long training jobs.
 
 ### Running LAMMPS + GNN models with period boundary conditions
 
