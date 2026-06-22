@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Tests for DeePMD-kit's PyTorch exportable backend integration."""
 
+import json
 import sys
 import types
 
@@ -55,6 +56,25 @@ def test_mace_export_metadata_defaults() -> None:
     assert model.has_chg_spin_ebd() is False
     assert model.has_default_chg_spin() is False
     assert model.get_default_chg_spin() is None
+
+
+def test_mace_freeze_disables_cueq_metadata(monkeypatch) -> None:
+    """Freeze-time MACE construction exports e3nn metadata for cueq checkpoints."""
+    monkeypatch.setattr(sys, "argv", ["dp", "--pt-expt", "freeze"])
+    model_params = {
+        "type": "mace",
+        "type_map": ["O", "H"],
+        "r_max": 6.0,
+        "sel": 4,
+        "hidden_irreps": "16x0e",
+        "enable_cueq": True,
+    }
+
+    model = MaceModel.get_model(model_params)
+
+    assert model_params["enable_cueq"] is False
+    assert json.loads(model.get_model_def_script())["enable_cueq"] is False
+    assert model.serialize()["enable_cueq"] is False
 
 
 def test_mace_pt_expt_reports_with_comm_artifact_requirement() -> None:

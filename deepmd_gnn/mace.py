@@ -3,7 +3,9 @@
 
 import importlib
 import json
+import sys
 import warnings
+from collections.abc import MutableMapping
 from copy import deepcopy
 from typing import Any, Optional, cast
 
@@ -96,6 +98,50 @@ def _make_cueq_config(enable_cueq: bool) -> Any | None:  # noqa: ANN401
         )
         raise RuntimeError(msg)
     return config
+
+
+def _is_freeze_command() -> bool:
+    """Return whether the current process is running a DeePMD freeze command."""
+    return "freeze" in sys.argv[1:]
+
+
+def _disable_cueq_in_model_params(model_params: MutableMapping[str, Any]) -> bool:
+    """Disable MACE cuEquivariance flags in model definition metadata."""
+    changed = False
+    if model_params.get("type") == "mace" and model_params.get("enable_cueq"):
+        model_params["enable_cueq"] = False
+        changed = True
+    model_dict = model_params.get("model_dict")
+    if isinstance(model_dict, MutableMapping):
+        for sub_model_params in model_dict.values():
+            if isinstance(sub_model_params, MutableMapping):
+                changed |= _disable_cueq_in_model_params(sub_model_params)
+    return changed
+
+
+def _transfer_cueq_to_e3nn(
+    source_model: torch.nn.Module,
+    target_model: torch.nn.Module,
+    *,
+    hidden_irreps: str,
+    correlation: int,
+    num_interactions: int,
+) -> None:
+    """Transfer MACE cuEquivariance weights to an e3nn MACE model."""
+    from mace.cli.convert_cueq_e3nn import (  # noqa: PLC0415
+        transfer_weights,
+    )
+
+    num_product_irreps = len(o3.Irreps(hidden_irreps).slices()) - 1
+    use_reduced_cg = bool(getattr(source_model, "use_reduced_cg", True))
+    transfer_weights(
+        source_model,
+        target_model,
+        num_product_irreps,
+        correlation,
+        num_interactions,
+        use_reduced_cg,
+    )
 
 
 if not hasattr(torch.ops.deepmd, "border_op"):  # pragma: no cover
@@ -536,6 +582,7 @@ class MaceModel(BaseModel):
             "avg_num_neighbors": avg_num_neighbors,
             "enable_cueq": enable_cueq,
         }
+        self._disable_cueq_for_freeze = bool(enable_cueq and _is_freeze_command())
         self.type_map = type_map
         self.ntypes = len(type_map)
         self.rcut = r_max
@@ -575,10 +622,149 @@ class MaceModel(BaseModel):
             std=std,
             radial_MLP=radial_MLP,
             radial_type=radial_type,
-            enable_cueq=enable_cueq,
-            script_model=True,
+            enable_cueq=enable_cueq and not self._disable_cueq_for_freeze,
+            script_model=not self._disable_cueq_for_freeze,
         )
         self.atomic_numbers = atomic_numbers
+
+    def _enable_cueq_for_runtime(self) -> bool:
+        return bool(self.params["enable_cueq"] and not self._disable_cueq_for_freeze)
+
+    def _params_for_serialization(self) -> dict[str, Any]:
+        params = self.params.copy()
+        if self._disable_cueq_for_freeze:
+            params["enable_cueq"] = False
+        return params
+
+    def _sync_freeze_model_def_script(self) -> None:
+        model_def_script = cast("str", getattr(self, "model_def_script", ""))
+        if not self._disable_cueq_for_freeze or not model_def_script:
+            return
+        try:
+            model_params = json.loads(model_def_script)
+        except json.JSONDecodeError:
+            return
+        if _disable_cueq_in_model_params(model_params):
+            self.model_def_script = json.dumps(model_params)
+
+    def _make_mace_network_from_params(
+        self,
+        *,
+        enable_cueq: bool,
+        script_model: bool,
+    ) -> torch.nn.Module:
+        return _make_mace_network(
+            r_max=self.params["r_max"],
+            num_radial_basis=self.params["num_radial_basis"],
+            num_cutoff_basis=self.params["num_cutoff_basis"],
+            max_ell=self.params["max_ell"],
+            interaction=self.params["interaction"],
+            num_interactions=self.params["num_interactions"],
+            num_elements=self.ntypes,
+            hidden_irreps=self.params["hidden_irreps"],
+            atomic_numbers=self.atomic_numbers,
+            avg_num_neighbors=self.avg_num_neighbors,
+            pair_repulsion=self.params["pair_repulsion"],
+            distance_transform=self.params["distance_transform"],
+            correlation=self.params["correlation"],
+            gate=self.params["gate"],
+            MLP_irreps=self.params["MLP_irreps"],
+            std=self.params["std"],
+            radial_MLP=self.params["radial_MLP"],
+            radial_type=self.params["radial_type"],
+            enable_cueq=enable_cueq,
+            script_model=script_model,
+        )
+
+    def _make_raw_mace_network_from_current_state(self) -> torch.nn.Module:
+        model = cast("torch.nn.Module", self.model)
+        raw_model = self._make_mace_network_from_params(
+            enable_cueq=self._enable_cueq_for_runtime(),
+            script_model=False,
+        )
+        raw_model.load_state_dict(model.state_dict())
+        return raw_model
+
+    def _replace_with_scripted_e3nn_model_for_freeze(
+        self,
+        raw_model: torch.nn.Module | None = None,
+    ) -> torch.nn.Module:
+        scripted_model = self._make_mace_network_from_params(
+            enable_cueq=False,
+            script_model=True,
+        )
+        if raw_model is not None:
+            scripted_model.load_state_dict(raw_model.state_dict())
+        self.model = scripted_model
+        return scripted_model
+
+    def _adapt_cueq_state_for_freeze(
+        self,
+        state_dict: MutableMapping[str, Any],
+        prefix: str,
+    ) -> None:
+        if not self._disable_cueq_for_freeze:
+            return
+        self._sync_freeze_model_def_script()
+        extra_state = state_dict.get("_extra_state")
+        if isinstance(extra_state, MutableMapping):
+            model_params = extra_state.get("model_params")
+            if isinstance(model_params, MutableMapping):
+                _disable_cueq_in_model_params(model_params)
+
+        model_prefix = f"{prefix}model."
+        source_state = {
+            key.removeprefix(model_prefix): value
+            for key, value in state_dict.items()
+            if key.startswith(model_prefix)
+        }
+        if "products.0.symmetric_contractions.weight" not in source_state:
+            self._replace_with_scripted_e3nn_model_for_freeze()
+            return
+
+        source_model = self._make_mace_network_from_params(
+            enable_cueq=True,
+            script_model=False,
+        )
+        source_model.load_state_dict(source_state)
+        target_model = cast("torch.nn.Module", self.model)
+        _transfer_cueq_to_e3nn(
+            source_model,
+            target_model,
+            hidden_irreps=self.params["hidden_irreps"],
+            correlation=self.params["correlation"],
+            num_interactions=self.params["num_interactions"],
+        )
+        scripted_model = self._replace_with_scripted_e3nn_model_for_freeze(
+            target_model,
+        )
+
+        for key in list(state_dict):
+            if key.startswith(model_prefix):
+                del state_dict[key]
+        for key, value in scripted_model.state_dict().items():
+            state_dict[f"{model_prefix}{key}"] = value
+
+    def _load_from_state_dict(
+        self,
+        state_dict: MutableMapping[str, Any],
+        prefix: str,
+        local_metadata: MutableMapping[str, Any],
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        self._adapt_cueq_state_for_freeze(state_dict, prefix)
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
 
     @property
     def atomic_model(self) -> Any:  # noqa: ANN401
@@ -612,29 +798,7 @@ class MaceModel(BaseModel):
             cached.train(self.training)
             return cached
 
-        raw_model = _make_mace_network(
-            r_max=self.params["r_max"],
-            num_radial_basis=self.params["num_radial_basis"],
-            num_cutoff_basis=self.params["num_cutoff_basis"],
-            max_ell=self.params["max_ell"],
-            interaction=self.params["interaction"],
-            num_interactions=self.params["num_interactions"],
-            num_elements=self.ntypes,
-            hidden_irreps=self.params["hidden_irreps"],
-            atomic_numbers=self.atomic_numbers,
-            avg_num_neighbors=self.avg_num_neighbors,
-            pair_repulsion=self.params["pair_repulsion"],
-            distance_transform=self.params["distance_transform"],
-            correlation=self.params["correlation"],
-            gate=self.params["gate"],
-            MLP_irreps=self.params["MLP_irreps"],
-            std=self.params["std"],
-            radial_MLP=self.params["radial_MLP"],
-            radial_type=self.params["radial_type"],
-            enable_cueq=self.params["enable_cueq"],
-            script_model=False,
-        )
-        raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model = self._make_raw_mace_network_from_current_state()
         _link_module_state(raw_model, scripted_model)
         raw_model.train(self.training)
         self.__dict__["_compile_trace_model"] = raw_model
@@ -1479,29 +1643,7 @@ class MaceModel(BaseModel):
         make_fx_kwargs = make_fx_kwargs.copy()
         model = self
         scripted_model = self.model
-        raw_model = _make_mace_network(
-            r_max=self.params["r_max"],
-            num_radial_basis=self.params["num_radial_basis"],
-            num_cutoff_basis=self.params["num_cutoff_basis"],
-            max_ell=self.params["max_ell"],
-            interaction=self.params["interaction"],
-            num_interactions=self.params["num_interactions"],
-            num_elements=self.ntypes,
-            hidden_irreps=self.params["hidden_irreps"],
-            atomic_numbers=self.atomic_numbers,
-            avg_num_neighbors=self.avg_num_neighbors,
-            pair_repulsion=self.params["pair_repulsion"],
-            distance_transform=self.params["distance_transform"],
-            correlation=self.params["correlation"],
-            gate=self.params["gate"],
-            MLP_irreps=self.params["MLP_irreps"],
-            std=self.params["std"],
-            radial_MLP=self.params["radial_MLP"],
-            radial_type=self.params["radial_type"],
-            enable_cueq=self.params["enable_cueq"],
-            script_model=False,
-        )
-        raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model = self._make_raw_mace_network_from_current_state()
         raw_model.to(extended_coord.device)
         raw_model.train(scripted_model.training)
 
@@ -1571,29 +1713,7 @@ class MaceModel(BaseModel):
         make_fx_kwargs = make_fx_kwargs.copy()
         model = self
         scripted_model = self.model
-        raw_model = _make_mace_network(
-            r_max=self.params["r_max"],
-            num_radial_basis=self.params["num_radial_basis"],
-            num_cutoff_basis=self.params["num_cutoff_basis"],
-            max_ell=self.params["max_ell"],
-            interaction=self.params["interaction"],
-            num_interactions=self.params["num_interactions"],
-            num_elements=self.ntypes,
-            hidden_irreps=self.params["hidden_irreps"],
-            atomic_numbers=self.atomic_numbers,
-            avg_num_neighbors=self.avg_num_neighbors,
-            pair_repulsion=self.params["pair_repulsion"],
-            distance_transform=self.params["distance_transform"],
-            correlation=self.params["correlation"],
-            gate=self.params["gate"],
-            MLP_irreps=self.params["MLP_irreps"],
-            std=self.params["std"],
-            radial_MLP=self.params["radial_MLP"],
-            radial_type=self.params["radial_type"],
-            enable_cueq=self.params["enable_cueq"],
-            script_model=False,
-        )
-        raw_model.load_state_dict(scripted_model.state_dict())
+        raw_model = self._make_raw_mace_network_from_current_state()
         raw_model.to(extended_coord.device)
         raw_model.train(scripted_model.training)
 
@@ -1837,7 +1957,7 @@ class MaceModel(BaseModel):
             "@class": "Model",
             "@version": 1,
             "type": "mace",
-            **self.params,
+            **self._params_for_serialization(),
             "@variables": {
                 kk: to_numpy_array(vv) for kk, vv in self.model.state_dict().items()
             },
@@ -1944,6 +2064,7 @@ class MaceModel(BaseModel):
         BaseBaseModel
             The model
         """
+        original_model_params = model_params
         model_params_old = model_params.copy()
         model_params = model_params.copy()
         model_params.pop("type", None)
@@ -1956,5 +2077,9 @@ class MaceModel(BaseModel):
             msg = f"precision {precision} not supported"
             raise ValueError(msg)
         model = cls(**model_params)
+        if model._disable_cueq_for_freeze:
+            model_params_old["enable_cueq"] = False
+            if isinstance(original_model_params, MutableMapping):
+                original_model_params["enable_cueq"] = False
         model.model_def_script = json.dumps(model_params_old)
         return model
