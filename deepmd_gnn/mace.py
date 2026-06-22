@@ -4,7 +4,7 @@
 import importlib
 import json
 from copy import deepcopy
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import e3nn
 import torch
@@ -317,6 +317,50 @@ def _make_mace_network(
     return model
 
 
+def _set_module_state_tensor(
+    root: torch.nn.Module,
+    name: str,
+    tensor: torch.Tensor,
+) -> None:
+    if "." in name:
+        module_name, attr_name = name.rsplit(".", 1)
+        module = root.get_submodule(module_name)
+    else:
+        module = root
+        attr_name = name
+    setattr(module, attr_name, tensor)
+
+
+def _link_module_state(
+    target: torch.nn.Module,
+    source: torch.nn.Module,
+) -> None:
+    source_params = dict(source.named_parameters())
+    target_params = dict(target.named_parameters())
+    if set(source_params) != set(target_params):
+        msg = "scripted and raw MACE parameter names do not match"
+        raise RuntimeError(msg)
+    for name, param in source_params.items():
+        _set_module_state_tensor(target, name, param)
+
+    source_buffers = dict(source.named_buffers())
+    target_buffers = dict(target.named_buffers())
+    if set(source_buffers) != set(target_buffers):
+        msg = "scripted and raw MACE buffer names do not match"
+        raise RuntimeError(msg)
+    for name, buffer in source_buffers.items():
+        _set_module_state_tensor(target, name, buffer)
+
+
+@torch.jit.unused
+def _is_make_fx_fake_tensor(value: Any) -> bool:  # noqa: ANN401
+    value_type = type(value)
+    return (
+        value_type.__module__ == "torch._subclasses.fake_tensor"
+        and value_type.__name__ == "FakeTensor"
+    )
+
+
 def _clear_export_guards_once(traced: torch.nn.Module) -> None:
     """Clear over-specialized guards from the next export of ``traced``."""
     original_export = torch.export.export
@@ -504,6 +548,94 @@ class MaceModel(BaseModel):
     def descriptor(self) -> Any:  # noqa: ANN401
         """Provide descriptor metadata expected by deepmd-kit's pt2 export."""
         return self
+
+    def get_descriptor(self) -> Any:  # noqa: ANN401
+        """Return descriptor metadata expected by DeePMD-kit trainers."""
+        if not torch.jit.is_scripting():
+            self._ensure_compile_trace_model()
+        return self.descriptor
+
+    @torch.jit.unused
+    def _ensure_compile_trace_model(self) -> torch.nn.Module:
+        scripted_model_raw = self.model
+        if scripted_model_raw is None:
+            msg = "MACE network is not initialized"
+            raise RuntimeError(msg)
+        scripted_model = cast("torch.nn.Module", scripted_model_raw)
+        cached = cast(
+            "Optional[torch.nn.Module]",
+            self.__dict__.get("_compile_trace_model"),
+        )
+        cached_source = self.__dict__.get("_compile_trace_model_source")
+        if cached is not None and cached_source is scripted_model:
+            cached.train(self.training)
+            return cached
+
+        raw_model = _make_mace_network(
+            r_max=self.params["r_max"],
+            num_radial_basis=self.params["num_radial_basis"],
+            num_cutoff_basis=self.params["num_cutoff_basis"],
+            max_ell=self.params["max_ell"],
+            interaction=self.params["interaction"],
+            num_interactions=self.params["num_interactions"],
+            num_elements=self.ntypes,
+            hidden_irreps=self.params["hidden_irreps"],
+            atomic_numbers=self.atomic_numbers,
+            avg_num_neighbors=self.avg_num_neighbors,
+            pair_repulsion=self.params["pair_repulsion"],
+            distance_transform=self.params["distance_transform"],
+            correlation=self.params["correlation"],
+            gate=self.params["gate"],
+            MLP_irreps=self.params["MLP_irreps"],
+            std=self.params["std"],
+            radial_MLP=self.params["radial_MLP"],
+            radial_type=self.params["radial_type"],
+            script_model=False,
+        )
+        raw_model.load_state_dict(scripted_model.state_dict())
+        _link_module_state(raw_model, scripted_model)
+        raw_model.train(self.training)
+        self.__dict__["_compile_trace_model"] = raw_model
+        self.__dict__["_compile_trace_model_source"] = scripted_model
+        return raw_model
+
+    @torch.jit.unused
+    def _forward_lower_common_compile_trace(
+        self,
+        nloc: int,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: Optional[torch.Tensor],
+        fparam: Optional[torch.Tensor],
+        aparam: Optional[torch.Tensor],
+        do_atomic_virial: bool,
+        comm_dict: Optional[dict[str, torch.Tensor]],
+    ) -> dict[str, torch.Tensor]:
+        compile_trace_model = self.__dict__.get("_compile_trace_model")
+        if compile_trace_model is None:
+            compile_trace_model = self._ensure_compile_trace_model()
+
+        previous_model = self.model
+        previous_exportable_edge_index = self._use_exportable_edge_index
+        self.model = compile_trace_model
+        self._use_exportable_edge_index = True
+        try:
+            return self.forward_lower_common(
+                nloc,
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping,
+                None,
+                fparam,
+                aparam,
+                do_atomic_virial,
+                comm_dict,
+            )
+        finally:
+            self.model = previous_model
+            self._use_exportable_edge_index = previous_exportable_edge_index
 
     @property
     def observed_type(self) -> Optional[list[str]]:
@@ -815,18 +947,44 @@ class MaceModel(BaseModel):
             )
             raise ValueError(msg)
 
-        model_ret = self.forward_lower_common(
-            nloc,
-            extended_coord,
-            extended_atype,
-            nlist,
-            mapping,
-            None,
-            fparam,
-            aparam,
-            do_atomic_virial,
-            comm_dict,
-        )
+        if torch.jit.is_scripting():
+            model_ret = self.forward_lower_common(
+                nloc,
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping,
+                None,
+                fparam,
+                aparam,
+                do_atomic_virial,
+                comm_dict,
+            )
+        elif _is_make_fx_fake_tensor(extended_coord):
+            model_ret = self._forward_lower_common_compile_trace(
+                nloc,
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping,
+                fparam,
+                aparam,
+                do_atomic_virial,
+                comm_dict,
+            )
+        else:
+            model_ret = self.forward_lower_common(
+                nloc,
+                extended_coord,
+                extended_atype,
+                nlist,
+                mapping,
+                None,
+                fparam,
+                aparam,
+                do_atomic_virial,
+                comm_dict,
+            )
         model_predict = {}
         model_predict["atom_energy"] = model_ret["energy"]
         model_predict["energy"] = model_ret["energy_redu"]
