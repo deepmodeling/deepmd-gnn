@@ -631,6 +631,7 @@ class MaceModel(BaseModel):
             std=self.params["std"],
             radial_MLP=self.params["radial_MLP"],
             radial_type=self.params["radial_type"],
+            enable_cueq=self.params["enable_cueq"],
             script_model=False,
         )
         raw_model.load_state_dict(scripted_model.state_dict())
@@ -1589,6 +1590,7 @@ class MaceModel(BaseModel):
             std=self.params["std"],
             radial_MLP=self.params["radial_MLP"],
             radial_type=self.params["radial_type"],
+            enable_cueq=self.params["enable_cueq"],
             script_model=False,
         )
         raw_model.load_state_dict(scripted_model.state_dict())
