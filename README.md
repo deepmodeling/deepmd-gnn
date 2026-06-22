@@ -15,6 +15,35 @@ Supported packages and models include:
 After [installing the plugin](#installation), you can train the GNN models using DeePMD-kit, run active learning cycles for the GNN models using [DP-GEN](https://github.com/deepmodeling/dpgen), and perform simulations with MACE and NequIP models using molecular dynamic packages supported by DeePMD-kit, such as [LAMMPS](https://github.com/lammps/lammps) and [AMBER](https://ambermd.org/).
 You can follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/) to train the GNN models using its PyTorch backend, after using the specific [model parameters](#parameters).
 
+## Highlights
+
+The official MACE and NequIP packages remain the reference implementations of
+their model architectures. DeePMD-GNN focuses on what is useful beyond the
+standalone official workflows: bringing those equivariant GNN models into the
+DeePMD-kit ecosystem for training, active learning, and production molecular
+simulations.
+
+- **Unified DeePMD-kit workflow**: train and freeze MACE or NequIP models with
+  `dp --pt train` and `dp --pt freeze`, using DeePMD-kit data pipelines,
+  inputs, losses, and model serialization instead of maintaining a separate
+  workflow for each upstream package.
+- **Broader MD engine access**: run frozen GNN models through molecular dynamics
+  interfaces supported by DeePMD-kit, including LAMMPS and AMBER, rather than
+  relying only on the engines and plugins maintained by the official MACE or
+  NequIP projects.
+- **Parallel periodic simulations**: use DeePMD-kit's message-passing
+  communication path for LAMMPS/MPI runs. MACE and NequIP models advertise
+  their message passing to DeePMD-kit, so ghost-atom features can be exchanged
+  between message-passing layers through `border_op`.
+- **Active learning and QM/MM integration**: plug MACE or NequIP models into
+  DP-GEN active learning loops and DeePMD-kit DPRc/AmberTools workflows through
+  the same interface used by other DeePMD-kit models.
+- **Deployment-oriented MACE extras**: export MACE models with the
+  DeePMD-kit/LAMMPS PyTorch exportable backend (`pt_expt`), train with optional
+  cuEquivariance acceleration, use DeePMD-kit's `torch.compile` path, and
+  conservatively convert selected official MACE-OFF checkpoints for downstream
+  validation in DeePMD-kit-supported engines.
+
 ## Credits
 
 If you use this software, please cite the following paper:
