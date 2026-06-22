@@ -110,7 +110,17 @@ same way as other DeePMD-kit frozen models.
 
 MACE training can use cuEquivariance kernels when the installed MACE package
 provides `CuEquivarianceConfig` and the cuEquivariance runtime packages are
-available. Enable it in the `model` section:
+available. Install the matching extra for the CUDA runtime used by PyTorch:
+
+```sh
+pip install "deepmd-gnn[cueq]"
+```
+
+The `cueq` extra installs the CUDA 12 cuEquivariance op package. For CUDA 11
+environments, use `deepmd-gnn[cueq-cu11]` instead. When installing from a
+source checkout, use `pip install ".[cueq]"` or `pip install ".[cueq-cu11]"`.
+
+Then enable it in the `model` section:
 
 ```json
 "model": {

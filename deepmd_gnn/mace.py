@@ -94,7 +94,9 @@ def _make_cueq_config(enable_cueq: bool) -> Any | None:  # noqa: ANN401
     if not getattr(config, "enabled", False):
         msg = (
             "enable_cueq=True requires cuequivariance, cuequivariance-torch, "
-            "and cuequivariance-ops-torch-cu12/cu11 to be installed"
+            "and cuequivariance-ops-torch-cu12/cu11 to be installed. "
+            "Install deepmd-gnn[cueq] for CUDA 12 or deepmd-gnn[cueq-cu11] "
+            "for CUDA 11."
         )
         raise RuntimeError(msg)
     return config
