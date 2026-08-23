@@ -4,11 +4,11 @@
     "type": "nequip",
     "type_map": [
       "C",
-      "P",
-      "O",
       "H",
+      "HW",
+      "O",
       "OW",
-      "HW"
+      "P"
     ],
     "r_max": 6.0,
     "sel": "auto",
