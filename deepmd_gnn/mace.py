@@ -67,6 +67,10 @@ from deepmd_gnn.mace_network import (
 from deepmd_gnn.mace_network import (
     transfer_cueq_to_e3nn as _transfer_cueq_to_e3nn,
 )
+from deepmd_gnn.precision import (
+    dtype_from_precision,
+    temporary_default_dtype,
+)
 from deepmd_gnn.stat_compat import load_observed_type_stat_compat
 
 
@@ -287,10 +291,12 @@ class MaceModel(BaseModel):
         radial_MLP: list[int] = [64, 64, 64],  # noqa: B006
         std: float = 1,
         avg_num_neighbors: float | None = None,
+        precision: str = "float32",
         enable_cueq: bool = False,
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
         super().__init__(**kwargs)
+        model_dtype = dtype_from_precision(precision)
         self._use_exportable_edge_index = False
         self._use_exportable_border_op = False
         self.params: dict[str, Any] = {
@@ -312,6 +318,7 @@ class MaceModel(BaseModel):
             "radial_MLP": radial_MLP,
             "std": std,
             "avg_num_neighbors": avg_num_neighbors,
+            "precision": precision,
             "enable_cueq": enable_cueq,
         }
         self._disable_cueq_for_freeze = bool(enable_cueq and _is_freeze_command())
@@ -335,28 +342,29 @@ class MaceModel(BaseModel):
                 self.preset_out_bias["energy"].append([0])
                 self.mm_types.append(ii)
 
-        self.model = _make_mace_network(
-            r_max=r_max,
-            num_radial_basis=num_radial_basis,
-            num_cutoff_basis=num_cutoff_basis,
-            max_ell=max_ell,
-            interaction=interaction,
-            num_interactions=num_interactions,
-            num_elements=self.ntypes,
-            hidden_irreps=hidden_irreps,
-            atomic_numbers=atomic_numbers,
-            avg_num_neighbors=self.avg_num_neighbors,
-            pair_repulsion=pair_repulsion,
-            distance_transform=distance_transform,
-            correlation=correlation,
-            gate=gate,
-            MLP_irreps=MLP_irreps,
-            std=std,
-            radial_MLP=radial_MLP,
-            radial_type=radial_type,
-            enable_cueq=enable_cueq and not self._disable_cueq_for_freeze,
-            script_model=not self._disable_cueq_for_freeze,
-        )
+        with temporary_default_dtype(model_dtype):
+            self.model = _make_mace_network(
+                r_max=r_max,
+                num_radial_basis=num_radial_basis,
+                num_cutoff_basis=num_cutoff_basis,
+                max_ell=max_ell,
+                interaction=interaction,
+                num_interactions=num_interactions,
+                num_elements=self.ntypes,
+                hidden_irreps=hidden_irreps,
+                atomic_numbers=atomic_numbers,
+                avg_num_neighbors=self.avg_num_neighbors,
+                pair_repulsion=pair_repulsion,
+                distance_transform=distance_transform,
+                correlation=correlation,
+                gate=gate,
+                MLP_irreps=MLP_irreps,
+                std=std,
+                radial_MLP=radial_MLP,
+                radial_type=radial_type,
+                enable_cueq=enable_cueq and not self._disable_cueq_for_freeze,
+                script_model=not self._disable_cueq_for_freeze,
+            )
         self.atomic_numbers = atomic_numbers
 
     def _enable_cueq_for_runtime(self) -> bool:
@@ -385,28 +393,30 @@ class MaceModel(BaseModel):
         enable_cueq: bool,
         script_model: bool,
     ) -> torch.nn.Module:
-        return _make_mace_network(
-            r_max=self.params["r_max"],
-            num_radial_basis=self.params["num_radial_basis"],
-            num_cutoff_basis=self.params["num_cutoff_basis"],
-            max_ell=self.params["max_ell"],
-            interaction=self.params["interaction"],
-            num_interactions=self.params["num_interactions"],
-            num_elements=self.ntypes,
-            hidden_irreps=self.params["hidden_irreps"],
-            atomic_numbers=self.atomic_numbers,
-            avg_num_neighbors=self.avg_num_neighbors,
-            pair_repulsion=self.params["pair_repulsion"],
-            distance_transform=self.params["distance_transform"],
-            correlation=self.params["correlation"],
-            gate=self.params["gate"],
-            MLP_irreps=self.params["MLP_irreps"],
-            std=self.params["std"],
-            radial_MLP=self.params["radial_MLP"],
-            radial_type=self.params["radial_type"],
-            enable_cueq=enable_cueq,
-            script_model=script_model,
-        )
+        model_dtype = dtype_from_precision(self.params["precision"])
+        with temporary_default_dtype(model_dtype):
+            return _make_mace_network(
+                r_max=self.params["r_max"],
+                num_radial_basis=self.params["num_radial_basis"],
+                num_cutoff_basis=self.params["num_cutoff_basis"],
+                max_ell=self.params["max_ell"],
+                interaction=self.params["interaction"],
+                num_interactions=self.params["num_interactions"],
+                num_elements=self.ntypes,
+                hidden_irreps=self.params["hidden_irreps"],
+                atomic_numbers=self.atomic_numbers,
+                avg_num_neighbors=self.avg_num_neighbors,
+                pair_repulsion=self.params["pair_repulsion"],
+                distance_transform=self.params["distance_transform"],
+                correlation=self.params["correlation"],
+                gate=self.params["gate"],
+                MLP_irreps=self.params["MLP_irreps"],
+                std=self.params["std"],
+                radial_MLP=self.params["radial_MLP"],
+                radial_type=self.params["radial_type"],
+                enable_cueq=enable_cueq,
+                script_model=script_model,
+            )
 
     def _make_raw_mace_network_from_current_state(self) -> torch.nn.Module:
         model = cast("torch.nn.Module", self.model)
@@ -1820,14 +1830,6 @@ class MaceModel(BaseModel):
         model_params_old = model_params.copy()
         model_params = model_params.copy()
         model_params.pop("type", None)
-        precision = model_params.pop("precision", "float32")
-        if precision == "float32":
-            torch.set_default_dtype(torch.float32)
-        elif precision == "float64":
-            torch.set_default_dtype(torch.float64)
-        else:
-            msg = f"precision {precision} not supported"
-            raise ValueError(msg)
         model = cls(**model_params)
         if model._disable_cueq_for_freeze:
             model_params_old["enable_cueq"] = False
