@@ -402,6 +402,70 @@ def test_load_mace_off_model_rejects_non_positive_sel() -> None:
         load_mace_off_model(model_name=None, model_path=Path("dummy.model"), sel=0)
 
 
+def test_loader_does_not_copy_checkpoint_into_reconstructed_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The trusted checkpoint should replace, not load into, the placeholder."""
+
+    class RejectingPlaceholder(torch.nn.Module):
+        def load_state_dict(self, *_args: object, **_kwargs: object) -> None:
+            msg = "checkpoint state must not be copied into the placeholder"
+            raise AssertionError(msg)
+
+    class FakeCheckpoint(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.atomic_energies_fn = type(
+                "AtomicEnergies",
+                (),
+                {"atomic_energies": torch.zeros(1)},
+            )()
+
+    class FakeWrapper:
+        def __init__(self, **_kwargs: object) -> None:
+            self.model: torch.nn.Module = RejectingPlaceholder()
+
+        def eval(self) -> None:
+            pass
+
+    config = {
+        "type_map": ["H"],
+        "r_max": 4.5,
+        "num_radial_basis": 8,
+        "num_cutoff_basis": 5,
+        "max_ell": 3,
+        "interaction": "RealAgnosticResidualInteractionBlock",
+        "num_interactions": 2,
+        "hidden_irreps": "96x0e",
+        "pair_repulsion": False,
+        "distance_transform": "None",
+        "correlation": 3,
+        "gate": "silu",
+        "MLP_irreps": "16x0e",
+        "radial_type": "bessel",
+        "radial_MLP": [64, 64, 64],
+        "std": 1.0,
+        "avg_num_neighbors": 1.0,
+    }
+    checkpoint = FakeCheckpoint()
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off._load_mace_checkpoint",
+        lambda *_args, **_kwargs: checkpoint,
+    )
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off._infer_deepmd_config",
+        lambda _model: config,
+    )
+    monkeypatch.setattr(
+        "deepmd_gnn.mace_off._load_deepmd_mace_symbols",
+        lambda: (["H"], FakeWrapper),
+    )
+
+    wrapped = load_mace_off_model(model_path=Path("fixture.model"), sel=1)
+
+    assert wrapped.model is checkpoint
+
+
 @pytest.mark.slow
 def test_download_real_model_uses_existing_url(tmp_path: Path) -> None:
     """The official off23_small checkpoint should still be downloadable."""
