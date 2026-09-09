@@ -248,10 +248,7 @@ def _validate_checkpoint_scope(
         msg = "Joint-embedding checkpoints are unsupported by the conservative loader"
         raise ValueError(msg)
 
-    if (
-        bool(getattr(mace_model, "pair_repulsion", False))
-        and not allow_pair_repulsion
-    ):
+    if bool(getattr(mace_model, "pair_repulsion", False)) and not allow_pair_repulsion:
         msg = "Pair-repulsion checkpoints are unsupported by the conservative loader"
         raise ValueError(msg)
 
