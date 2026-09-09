@@ -138,7 +138,10 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                 device=str(env.DEVICE),
             )
             _validate_descriptor_checkpoint(model)
-            inferred = _infer_deepmd_config(model)
+            inferred = _infer_deepmd_config(
+                model,
+                allow_pair_repulsion=True,
+            )
             checkpoint_type_map = inferred["type_map"]
             if self.type_map != checkpoint_type_map:
                 msg = (

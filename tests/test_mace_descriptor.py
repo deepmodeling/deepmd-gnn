@@ -32,6 +32,7 @@ def _write_mace_checkpoint(
     path: Path,
     *,
     keep_last_layer_irreps: bool,
+    pair_repulsion: bool = False,
 ) -> Path:
     """Write a tiny native checkpoint with no network access."""
     old_dtype = torch.get_default_dtype()
@@ -48,7 +49,7 @@ def _write_mace_checkpoint(
             hidden_irreps="2x0e + 2x1o",
             atomic_numbers=[1, 8],
             avg_num_neighbors=4.0,
-            pair_repulsion=False,
+            pair_repulsion=pair_repulsion,
             distance_transform="None",
             correlation=2,
             gate="silu",
@@ -211,6 +212,27 @@ def test_constructor_accepts_lowercase_single_head(
         type_map=["H", "O"],
     )
     assert descriptor.get_dim_out() == 2
+
+
+def test_constructor_accepts_pair_repulsion_for_descriptor(tmp_path: Path) -> None:
+    """Energy-only pair repulsion does not affect extracted backbone features."""
+    checkpoint = _write_mace_checkpoint(
+        tmp_path / "pair-repulsion.model",
+        keep_last_layer_irreps=False,
+        pair_repulsion=True,
+    )
+    descriptor = MaceDescriptor(
+        model_path=checkpoint,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    assert descriptor.config["pair_repulsion"] is True
+    assert descriptor.get_dim_out() == 2
+    restored = MaceDescriptor.deserialize(descriptor.serialize())
+    torch.testing.assert_close(
+        _descriptor_output(restored),
+        _descriptor_output(descriptor),
+    )
 
 
 def test_forward_shape_and_rotation_invariance(mace_checkpoint: Path) -> None:

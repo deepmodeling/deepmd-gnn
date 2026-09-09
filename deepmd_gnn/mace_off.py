@@ -228,7 +228,11 @@ def _infer_keep_last_layer_irreps(mace_model: ScaleShiftMACE) -> bool:
     return str(final_irreps) == str(hidden_irreps)
 
 
-def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
+def _validate_checkpoint_scope(
+    mace_model: ScaleShiftMACE,
+    *,
+    allow_pair_repulsion: bool = False,
+) -> None:
     atomic_numbers = mace_model.atomic_numbers.tolist()
     _validate_atomic_numbers(atomic_numbers)
 
@@ -246,14 +250,24 @@ def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
         msg = "Joint-embedding checkpoints are unsupported by the conservative loader"
         raise ValueError(msg)
 
-    if bool(getattr(mace_model, "pair_repulsion", False)):
+    if (
+        bool(getattr(mace_model, "pair_repulsion", False))
+        and not allow_pair_repulsion
+    ):
         msg = "Pair-repulsion checkpoints are unsupported by the conservative loader"
         raise ValueError(msg)
 
 
-def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> _InferredMaceConfig:
+def _infer_deepmd_config(
+    mace_model: ScaleShiftMACE,
+    *,
+    allow_pair_repulsion: bool = False,
+) -> _InferredMaceConfig:
     elements = _load_deepmd_mace_symbols()[0]
-    _validate_checkpoint_scope(mace_model)
+    _validate_checkpoint_scope(
+        mace_model,
+        allow_pair_repulsion=allow_pair_repulsion,
+    )
     atomic_numbers = mace_model.atomic_numbers.tolist()
 
     return {
@@ -265,7 +279,7 @@ def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> _InferredMaceConfig:
         "interaction": _infer_interaction_name(mace_model),
         "num_interactions": int(mace_model.num_interactions),
         "hidden_irreps": _infer_hidden_irreps(mace_model),
-        "pair_repulsion": False,
+        "pair_repulsion": bool(getattr(mace_model, "pair_repulsion", False)),
         "distance_transform": _infer_distance_transform(mace_model),
         "correlation": _infer_correlation(mace_model),
         "gate": _infer_gate_name(mace_model),
