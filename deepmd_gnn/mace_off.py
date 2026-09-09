@@ -58,6 +58,7 @@ class _InferredMaceConfig(TypedDict):
     radial_MLP: list[int]
     std: float
     avg_num_neighbors: float
+    keep_last_layer_irreps: bool
 
 
 @lru_cache(maxsize=1)
@@ -220,6 +221,13 @@ def _infer_avg_num_neighbors(mace_model: ScaleShiftMACE) -> float:
     return float(mace_model.interactions[0].avg_num_neighbors)
 
 
+def _infer_keep_last_layer_irreps(mace_model: ScaleShiftMACE) -> bool:
+    """Infer the constructor flag from the final product's actual output."""
+    hidden_irreps = mace_model.interactions[0].hidden_irreps
+    final_irreps = mace_model.products[-1].linear.irreps_out
+    return str(final_irreps) == str(hidden_irreps)
+
+
 def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
     atomic_numbers = mace_model.atomic_numbers.tolist()
     _validate_atomic_numbers(atomic_numbers)
@@ -264,6 +272,7 @@ def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> _InferredMaceConfig:
         "radial_MLP": _infer_radial_mlp(mace_model),
         "std": _infer_scale(mace_model),
         "avg_num_neighbors": _infer_avg_num_neighbors(mace_model),
+        "keep_last_layer_irreps": _infer_keep_last_layer_irreps(mace_model),
     }
 
 

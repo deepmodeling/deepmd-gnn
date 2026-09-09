@@ -116,6 +116,48 @@ dp --pt freeze
 A frozen model file named `frozen_model.pth` will be generated. You can use it in the MD packages or other interfaces.
 For details, follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/).
 
+### Pretrained MACE descriptors for properties
+
+The regular PyTorch backend can use a trusted native
+`mace.modules.ScaleShiftMACE` checkpoint as the descriptor of a standard
+DeePMD property model. See
+[`examples/property/mace/input.json`](examples/property/mace/input.json):
+
+```json
+"model": {
+  "type": "standard",
+  "type_map": ["H", "O"],
+  "descriptor": {
+    "type": "mace",
+    "model_path": "./trusted_scale_shift_mace.model",
+    "sel": 64,
+    "trainable": true
+  },
+  "fitting_net": {
+    "type": "property",
+    "property_name": "band_gap",
+    "task_dim": 1
+  }
+}
+```
+
+`model_path` uses Python pickle loading, so only load checkpoints from a
+trusted source. The model-level `type_map` must exactly match the checkpoint's
+atomic-number ordering; reordered or subset maps are rejected. `sel` is an
+explicit DeePMD neighbor-list capacity and cannot be inferred from MACE.
+
+The descriptor returns only invariant even-scalar (`0e`) channels from the
+final MACE product layer. Its embedding, interaction, and product weights are
+trainable by default together with the DeePMD `PropertyFittingNet`; MACE atomic
+energies, energy readouts, scale/shift, and pair-repulsion terms do not seed
+the property head. Property-label mean and standard deviation remain DeePMD
+statistics.
+
+This descriptor path currently supports only `dp --pt`. The `pt_expt`
+backend, cuEquivariance checkpoint conversion, MACE-MH/multi-head checkpoints,
+type-map subsets, MPI descriptor communication, LAMMPS deployment, and DPRc
+descriptor semantics are out of scope.
+
 ### Exporting MACE models with the PyTorch exportable backend
 
 MACE models can also be trained and frozen with DeePMD-kit's PyTorch exportable
@@ -357,3 +399,4 @@ about (for example in LAMMPS or AMBER).
 
 - [examples/water](examples/water)
 - [examples/dprc](examples/dprc)
+- [examples/property/mace](examples/property/mace)

@@ -1,7 +1,47 @@
 """Argument check for the MACE model."""
 
 from dargs import Argument
-from deepmd.utils.argcheck import model_args_plugin
+from deepmd.utils.argcheck import (
+    descrpt_args_plugin,
+    model_args_plugin,
+)
+
+
+@descrpt_args_plugin.register("mace")
+def mace_descriptor_args() -> Argument:
+    """Arguments for a pretrained MACE property descriptor."""
+    return Argument(
+        "mace",
+        dict,
+        [
+            Argument(
+                "sel",
+                int,
+                optional=False,
+                doc="Explicit mixed-type DeePMD neighbor-list capacity.",
+            ),
+            Argument(
+                "model_path",
+                str,
+                optional=False,
+                doc=(
+                    "Path to a trusted native mace.modules.ScaleShiftMACE "
+                    "pickle checkpoint."
+                ),
+            ),
+            Argument(
+                "trainable",
+                bool,
+                optional=True,
+                default=True,
+                doc="Whether to optimize the pretrained MACE backbone.",
+            ),
+        ],
+        doc=(
+            "PyTorch-only MACE descriptor exposing invariant 0e channels from "
+            "the final product layer."
+        ),
+    )
 
 
 @model_args_plugin.register("mace")
