@@ -15,13 +15,11 @@ from deepmd.utils.version import check_version_compatibility
 from e3nn import o3
 
 import deepmd_gnn.op  # noqa: F401
-from deepmd_gnn.mace import PeriodicTable
-from deepmd_gnn.mace_network import make_mace_network
-from deepmd_gnn.mace_off import (
-    _infer_deepmd_config,
-    _load_mace_checkpoint,
-    _temporary_default_dtype,
-    _validate_load_result,
+from deepmd_gnn.mace_checkpoint import (
+    MaceFeatureBackbone,
+    build_mace_feature_backbone,
+    inspect_native_mace_checkpoint,
+    load_native_mace_checkpoint,
 )
 
 if TYPE_CHECKING:
@@ -55,38 +53,6 @@ def _product_output_irreps(model: torch.nn.Module) -> o3.Irreps:
         msg = "Final MACE product layer does not expose output irreps"
         raise ValueError(msg)
     return o3.Irreps(irreps_out)
-
-
-def _validate_descriptor_checkpoint(model: torch.nn.Module) -> None:
-    """Reject options that cannot be reconstructed during serialization."""
-    unsupported_flags = {
-        "use_agnostic_product": False,
-        "use_so3": False,
-        "use_last_readout_only": False,
-        "use_embedding_readout": False,
-        "use_edge_irreps_first": False,
-        "apply_cutoff": True,
-    }
-    for name, supported_value in unsupported_flags.items():
-        value = getattr(model, name, supported_value)
-        if value != supported_value:
-            msg = (
-                f"Unsupported MACE descriptor checkpoint option: {name}={value!r}; "
-                f"only {supported_value!r} is supported"
-            )
-            raise ValueError(msg)
-    if getattr(model, "use_reduced_cg", True) is False:
-        msg = "MACE descriptor checkpoints with use_reduced_cg=False are unsupported"
-        raise ValueError(msg)
-    if getattr(model, "edge_irreps", None) is not None:
-        msg = "MACE descriptor checkpoints with edge_irreps are unsupported"
-        raise ValueError(msg)
-
-    for module in [model, *getattr(model, "products", [])]:
-        cueq_config = getattr(module, "cueq_config", None)
-        if cueq_config is not None and bool(getattr(cueq_config, "enabled", False)):
-            msg = "cuEquivariance MACE descriptor checkpoints are unsupported"
-            raise ValueError(msg)
 
 
 @BaseDescriptor.register("mace")
@@ -133,15 +99,11 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         self.model_path = None if model_path is None else str(model_path)
 
         if model_path is not None:
-            model = _load_mace_checkpoint(
+            model = load_native_mace_checkpoint(
                 Path(model_path),
                 device=str(env.DEVICE),
             )
-            _validate_descriptor_checkpoint(model)
-            inferred = _infer_deepmd_config(
-                model,
-                allow_pair_repulsion=True,
-            )
+            inferred = inspect_native_mace_checkpoint(model)
             checkpoint_type_map = inferred["type_map"]
             if self.type_map != checkpoint_type_map:
                 msg = (
@@ -150,46 +112,17 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                 )
                 raise ValueError(msg)
             self.config = dict(inferred)
-            self.backbone = model
+            self.backbone = MaceFeatureBackbone(model)
         else:
             self.config = deepcopy(cast("dict[str, Any]", config))
-            checkpoint_type_map = self.config.pop("type_map", self.type_map)
+            checkpoint_type_map = self.config.get("type_map", self.type_map)
             if self.type_map != checkpoint_type_map:
                 msg = (
                     "Serialized MACE descriptor type_map mismatch: "
                     f"expected {checkpoint_type_map}, got {self.type_map}"
                 )
                 raise ValueError(msg)
-            source_dtype_name = self.config.pop("source_dtype", "float64")
-            source_dtype = getattr(torch, source_dtype_name)
-            atomic_numbers = [PeriodicTable[name] for name in self.type_map]
-            with _temporary_default_dtype(source_dtype):
-                self.backbone = make_mace_network(
-                    r_max=self.config["r_max"],
-                    num_radial_basis=self.config["num_radial_basis"],
-                    num_cutoff_basis=self.config["num_cutoff_basis"],
-                    max_ell=self.config["max_ell"],
-                    interaction=self.config["interaction"],
-                    num_interactions=self.config["num_interactions"],
-                    num_elements=self.ntypes,
-                    hidden_irreps=self.config["hidden_irreps"],
-                    atomic_numbers=atomic_numbers,
-                    avg_num_neighbors=self.config["avg_num_neighbors"],
-                    pair_repulsion=self.config["pair_repulsion"],
-                    distance_transform=self.config["distance_transform"],
-                    correlation=self.config["correlation"],
-                    gate=self.config["gate"],
-                    MLP_irreps=self.config["MLP_irreps"],
-                    std=self.config["std"],
-                    radial_MLP=self.config["radial_MLP"],
-                    radial_type=self.config["radial_type"],
-                    enable_cueq=False,
-                    script_model=False,
-                    keep_last_layer_irreps=self.config.get(
-                        "keep_last_layer_irreps",
-                        False,
-                    ),
-                )
+            self.backbone = build_mace_feature_backbone(self.config)
 
         self.rcut = float(self.config["r_max"])
         self.num_interactions = int(self.config["num_interactions"])
@@ -326,7 +259,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         nf, nloc, _ = nlist.shape
         nall = extended_atype.shape[1]
         positions = extended_coord.view(nf, nall, 3)
-        source_dtype = self.backbone.atomic_energies_fn.atomic_energies.dtype
+        source_dtype = next(self.backbone.parameters()).dtype
         positions_flat = positions.to(source_dtype).flatten(0, 1)
         atype = extended_atype.to(torch.int64)
         edge_index = torch.ops.deepmd_gnn.edge_index(
@@ -437,10 +370,8 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
 
     def serialize(self) -> dict:
         """Serialize architecture and all trained backbone state."""
-        source_dtype = self.backbone.atomic_energies_fn.atomic_energies.dtype
         config = deepcopy(self.config)
         config["type_map"] = self.type_map
-        config["source_dtype"] = str(source_dtype).removeprefix("torch.")
         return {
             "@class": "Descriptor",
             "@version": 1,
@@ -470,8 +401,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             for name, value in data.pop("@variables").items()
         }
         descriptor = cls(**data)
-        result = descriptor.backbone.load_state_dict(variables, strict=False)
-        _validate_load_result(result)
+        descriptor.backbone.load_state_dict(variables, strict=True)
         return descriptor
 
     @classmethod

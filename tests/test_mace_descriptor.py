@@ -18,8 +18,13 @@ from deepmd.pt.model.model import get_model
 from deepmd.pt.utils import env
 from deepmd.pt.utils.nlist import extend_input_and_build_neighbor_list
 from e3nn import o3
+from mace.calculators import mace_mp
 from mace.modules import MACE
 
+from deepmd_gnn.mace_checkpoint import (
+    inspect_native_mace_checkpoint,
+    load_native_mace_checkpoint,
+)
 from deepmd_gnn.mace_descriptor import (
     MaceDescriptor,
     _scalar_even_indices,
@@ -33,6 +38,9 @@ def _write_mace_checkpoint(
     *,
     keep_last_layer_irreps: bool,
     pair_repulsion: bool = False,
+    interaction_first: str = "RealAgnosticInteractionBlock",
+    heads: list[str] | None = None,
+    correlation: int | list[int] = 2,
 ) -> Path:
     """Write a tiny native checkpoint with no network access."""
     old_dtype = torch.get_default_dtype()
@@ -43,6 +51,7 @@ def _write_mace_checkpoint(
             num_radial_basis=4,
             num_cutoff_basis=5,
             max_ell=1,
+            interaction_first=interaction_first,
             interaction="RealAgnosticResidualInteractionBlock",
             num_interactions=2,
             num_elements=2,
@@ -51,7 +60,7 @@ def _write_mace_checkpoint(
             avg_num_neighbors=4.0,
             pair_repulsion=pair_repulsion,
             distance_transform="None",
-            correlation=2,
+            correlation=correlation,
             gate="silu",
             MLP_irreps="4x0e",
             std=1.0,
@@ -60,6 +69,7 @@ def _write_mace_checkpoint(
             enable_cueq=False,
             script_model=False,
             keep_last_layer_irreps=keep_last_layer_irreps,
+            heads=heads,
         )
         with torch.no_grad():
             atomic_energies = model.atomic_energies_fn.atomic_energies
@@ -95,6 +105,19 @@ def mixed_mace_checkpoint(tmp_path: Path) -> Path:
     return _write_mace_checkpoint(
         tmp_path / "mixed_mace.model",
         keep_last_layer_irreps=True,
+    )
+
+
+@pytest.fixture
+def mpa_like_checkpoint(tmp_path: Path) -> Path:
+    """Combine the architecture details that distinguish MACE-MPA-0."""
+    return _write_mace_checkpoint(
+        tmp_path / "mpa-like.model",
+        keep_last_layer_irreps=True,
+        pair_repulsion=True,
+        interaction_first="RealAgnosticResidualInteractionBlock",
+        heads=["default"],
+        correlation=[2, 3],
     )
 
 
@@ -196,43 +219,90 @@ def test_constructor_requires_exact_checkpoint_type_map(
         )
 
 
-def test_constructor_accepts_lowercase_single_head(
-    mace_checkpoint: Path,
-    tmp_path: Path,
-) -> None:
-    """A single head named ``default`` is not a multi-head checkpoint."""
-    model = torch.load(mace_checkpoint, map_location="cpu", weights_only=False)
-    model.heads = ["default"]
-    lowercase_checkpoint = tmp_path / "lowercase-head.model"
-    torch.save(model, lowercase_checkpoint)
-
-    descriptor = MaceDescriptor(
-        model_path=lowercase_checkpoint,
-        sel=16,
-        type_map=["H", "O"],
-    )
-    assert descriptor.get_dim_out() == 2
-
-
-def test_constructor_accepts_pair_repulsion_for_descriptor(tmp_path: Path) -> None:
-    """Energy-only pair repulsion does not affect extracted backbone features."""
+def test_constructor_rejects_truly_multi_head_checkpoint(tmp_path: Path) -> None:
+    """Only one named MACE head can define a descriptor backbone."""
     checkpoint = _write_mace_checkpoint(
-        tmp_path / "pair-repulsion.model",
+        tmp_path / "multi-head.model",
         keep_last_layer_irreps=False,
-        pair_repulsion=True,
+        heads=["first", "second"],
     )
+    with pytest.raises(ValueError, match="Multi-head MACE descriptors"):
+        MaceDescriptor(
+            model_path=checkpoint,
+            sel=16,
+            type_map=["H", "O"],
+        )
+
+
+def test_mpa_like_checkpoint_roundtrip_and_gradient(
+    mpa_like_checkpoint: Path,
+) -> None:
+    """MPA-like native checkpoints retain generic backbone architecture."""
     descriptor = MaceDescriptor(
-        model_path=checkpoint,
+        model_path=mpa_like_checkpoint,
         sel=16,
         type_map=["H", "O"],
     )
+    assert descriptor.config["interaction_first"] == (
+        "RealAgnosticResidualInteractionBlock"
+    )
+    assert descriptor.config["interaction"] == ("RealAgnosticResidualInteractionBlock")
+    assert descriptor.config["heads"] == ["default"]
     assert descriptor.config["pair_repulsion"] is True
-    assert descriptor.get_dim_out() == 2
+    assert descriptor.config["correlation"] == [2, 3]
+    assert descriptor.config["keep_last_layer_irreps"] is True
+    state_names = set(descriptor.backbone.state_dict())
+    assert not any("pair_repulsion" in name for name in state_names)
+    assert not any("atomic_energies" in name for name in state_names)
+    assert not any("readout" in name for name in state_names)
+    assert not any("scale_shift" in name for name in state_names)
+
+    output = _descriptor_output(descriptor)
+    output.square().sum().backward()
+    assert output.shape == (1, 3, 2)
+    assert any(
+        parameter.grad is not None and torch.count_nonzero(parameter.grad)
+        for parameter in descriptor.backbone.parameters()
+    )
+
     restored = MaceDescriptor.deserialize(descriptor.serialize())
     torch.testing.assert_close(
         _descriptor_output(restored),
-        _descriptor_output(descriptor),
+        output.detach(),
     )
+
+
+@pytest.mark.slow
+def test_real_medium_mpa0_checkpoint_with_official_helper(tmp_path: Path) -> None:
+    """Exercise official medium-mpa-0 when a local path or network is enabled."""
+    model_source = os.environ.get("MACE_MPA0_PATH")
+    if model_source is None:
+        if os.environ.get("RUN_NETWORK_TESTS") != "1":
+            pytest.skip(
+                "set MACE_MPA0_PATH or RUN_NETWORK_TESTS=1 for medium-mpa-0",
+            )
+        model_source = "medium-mpa-0"
+    native = mace_mp(
+        model=model_source,
+        device=str(env.DEVICE),
+        return_raw_model=True,
+    )
+    model_path = tmp_path / "medium-mpa-0.model"
+    torch.save(native, model_path)
+    native = load_native_mace_checkpoint(model_path, device=env.DEVICE)
+    config = inspect_native_mace_checkpoint(native)
+    descriptor = MaceDescriptor(
+        model_path=model_path,
+        sel=64,
+        type_map=config["type_map"],
+    )
+    assert config["interaction_first"] == "RealAgnosticResidualInteractionBlock"
+    assert config["heads"] == ["default"]
+    assert config["pair_repulsion"] is True
+    output = _descriptor_output(descriptor)
+    output.square().sum().backward()
+    assert torch.isfinite(output).all()
+    assert any(parameter.grad is not None for parameter in descriptor.parameters())
 
 
 def test_forward_shape_and_rotation_invariance(mace_checkpoint: Path) -> None:

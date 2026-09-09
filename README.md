@@ -129,7 +129,7 @@ DeePMD property model. See
   "type_map": ["H", "O"],
   "descriptor": {
     "type": "mace",
-    "model_path": "./trusted_scale_shift_mace.model",
+    "model_path": "./trusted_single_head_mace_mp_or_mpa.model",
     "sel": 64,
     "trainable": true
   },
@@ -145,13 +145,30 @@ DeePMD property model. See
 trusted source. The model-level `type_map` must exactly match the checkpoint's
 atomic-number ordering; reordered or subset maps are rejected. `sel` is an
 explicit DeePMD neighbor-list capacity and cannot be inferred from MACE.
+Official single-head MACE-MP-0/MPA-0 89-element checkpoints therefore require:
+
+```text
+["H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg",
+ "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr",
+ "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br",
+ "Kr", "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd",
+ "Ag", "Cd", "In", "Sn", "Sb", "Te", "I", "Xe", "Cs", "Ba", "La",
+ "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er",
+ "Tm", "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au",
+ "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac"]
+```
 
 The descriptor returns only invariant even-scalar (`0e`) channels from the
 final MACE product layer. Its embedding, interaction, and product weights are
 trainable by default together with the DeePMD `PropertyFittingNet`; MACE atomic
 energies, energy readouts, scale/shift, and pair-repulsion terms do not seed
 the property head. Property-label mean and standard deviation remain DeePMD
-statistics.
+statistics. Generic single-head native `ScaleShiftMACE` architectures are
+reconstructed from the checkpoint, including independent first/later
+interaction classes, layer-dependent correlation, named heads, pair
+repulsion, and mixed final irreps. This covers compatible MACE-MP-0 and MPA-0
+checkpoints without changing the separate conservative MACE-OFF energy-model
+conversion path.
 
 This descriptor path currently supports only `dp --pt`. The `pt_expt`
 backend, cuEquivariance checkpoint conversion, MACE-MH/multi-head checkpoints,

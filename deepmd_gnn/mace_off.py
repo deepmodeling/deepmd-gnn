@@ -89,12 +89,13 @@ def _load_e3nn_script() -> Callable[[torch.nn.Module], torch.nn.Module]:
 
 @contextmanager
 def _temporary_default_dtype(dtype: torch.dtype) -> Iterator[None]:
-    old_dtype = torch.get_default_dtype()
-    torch.set_default_dtype(dtype)
-    try:
+    """Compatibility alias for the generic checkpoint construction helper."""
+    from deepmd_gnn.mace_checkpoint import (  # noqa: PLC0415
+        temporary_default_dtype,
+    )
+
+    with temporary_default_dtype(dtype):
         yield
-    finally:
-        torch.set_default_dtype(old_dtype)
 
 
 def _validate_atomic_numbers(atomic_numbers: list[int]) -> None:
@@ -228,16 +229,12 @@ def _infer_keep_last_layer_irreps(mace_model: ScaleShiftMACE) -> bool:
     return str(final_irreps) == str(hidden_irreps)
 
 
-def _validate_checkpoint_scope(
-    mace_model: ScaleShiftMACE,
-    *,
-    allow_pair_repulsion: bool = False,
-) -> None:
+def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
     atomic_numbers = mace_model.atomic_numbers.tolist()
     _validate_atomic_numbers(atomic_numbers)
 
     heads = getattr(mace_model, "heads", None)
-    if heads is not None and (not isinstance(heads, (list, tuple)) or len(heads) != 1):
+    if heads not in (None, ["Default"]):
         msg = f"Multi-head checkpoints are unsupported: heads={heads}"
         raise ValueError(msg)
 
@@ -248,24 +245,14 @@ def _validate_checkpoint_scope(
         msg = "Joint-embedding checkpoints are unsupported by the conservative loader"
         raise ValueError(msg)
 
-    if (
-        bool(getattr(mace_model, "pair_repulsion", False))
-        and not allow_pair_repulsion
-    ):
+    if bool(getattr(mace_model, "pair_repulsion", False)):
         msg = "Pair-repulsion checkpoints are unsupported by the conservative loader"
         raise ValueError(msg)
 
 
-def _infer_deepmd_config(
-    mace_model: ScaleShiftMACE,
-    *,
-    allow_pair_repulsion: bool = False,
-) -> _InferredMaceConfig:
+def _infer_deepmd_config(mace_model: ScaleShiftMACE) -> _InferredMaceConfig:
     elements = _load_deepmd_mace_symbols()[0]
-    _validate_checkpoint_scope(
-        mace_model,
-        allow_pair_repulsion=allow_pair_repulsion,
-    )
+    _validate_checkpoint_scope(mace_model)
     atomic_numbers = mace_model.atomic_numbers.tolist()
 
     return {
@@ -277,7 +264,7 @@ def _infer_deepmd_config(
         "interaction": _infer_interaction_name(mace_model),
         "num_interactions": int(mace_model.num_interactions),
         "hidden_irreps": _infer_hidden_irreps(mace_model),
-        "pair_repulsion": bool(getattr(mace_model, "pair_repulsion", False)),
+        "pair_repulsion": False,
         "distance_transform": _infer_distance_transform(mace_model),
         "correlation": _infer_correlation(mace_model),
         "gate": _infer_gate_name(mace_model),
@@ -301,15 +288,11 @@ def _load_mace_checkpoint(model_path: Path, device: str) -> ScaleShiftMACE:
     callers should only use trusted checkpoint files, whether downloaded from the
     official download helper or supplied via a trusted local path.
     """
-    scale_shift_mace_cls = _load_mace_modules()[0]
-    model = torch.load(str(model_path), map_location=device, weights_only=False)
-    if not isinstance(model, scale_shift_mace_cls):
-        msg = (
-            "Loaded checkpoint is not a ScaleShiftMACE model: "
-            f"{model.__class__.__module__}.{model.__class__.__name__}"
-        )
-        raise TypeError(msg)
-    return model
+    from deepmd_gnn.mace_checkpoint import (  # noqa: PLC0415
+        load_native_mace_checkpoint,
+    )
+
+    return load_native_mace_checkpoint(model_path, device=device)
 
 
 def _validate_load_result(load_result: object) -> None:

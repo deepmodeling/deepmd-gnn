@@ -7,7 +7,7 @@
     ],
     "descriptor": {
       "type": "mace",
-      "model_path": "./trusted_scale_shift_mace.model",
+      "model_path": "./trusted_single_head_mace_mp_or_mpa.model",
       "sel": 64,
       "trainable": true
     },
