@@ -183,7 +183,8 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                     enable_cueq=False,
                     script_model=False,
                     keep_last_layer_irreps=self.config.get(
-                        "keep_last_layer_irreps", False,
+                        "keep_last_layer_irreps",
+                        False,
                     ),
                 )
 
@@ -275,7 +276,9 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         return {}
 
     def set_stat_mean_and_stddev(
-        self, mean: torch.Tensor, stddev: torch.Tensor,
+        self,
+        mean: torch.Tensor,
+        stddev: torch.Tensor,
     ) -> None:
         """Ignore external input statistics because MACE uses none."""
         del mean, stddev
@@ -285,7 +288,10 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         return self._stat_mean, self._stat_stddev
 
     def share_params(
-        self, base_class: MaceDescriptor, shared_level: int, resume: bool = False,
+        self,
+        base_class: MaceDescriptor,
+        shared_level: int,
+        resume: bool = False,
     ) -> None:
         """Share a complete MACE backbone at level zero."""
         del resume
@@ -340,9 +346,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                 device=mapping.device,
             ).unsqueeze(-1).expand(nf, nall).reshape(-1)
             image_shifts = positions_flat - positions_flat[mapping_flat]
-            shifts = (
-                image_shifts[edge_index[1]] - image_shifts[edge_index[0]]
-            )
+            shifts = image_shifts[edge_index[1]] - image_shifts[edge_index[0]]
             edge_index = mapping_flat[edge_index]
         elif self.num_interactions > 1 and nloc < nall:
             msg = "Multi-layer MACE descriptor requires mapping for extended atoms"
@@ -410,7 +414,10 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             raise NotImplementedError(msg)
         del fparam, charge_spin
         features = self._final_product_features(
-            extended_coord, extended_atype, nlist, mapping,
+            extended_coord,
+            extended_atype,
+            nlist,
+            mapping,
         )
         invariant = torch.index_select(
             features,
