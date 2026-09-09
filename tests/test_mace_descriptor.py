@@ -195,6 +195,24 @@ def test_constructor_requires_exact_checkpoint_type_map(
         )
 
 
+def test_constructor_accepts_lowercase_single_head(
+    mace_checkpoint: Path,
+    tmp_path: Path,
+) -> None:
+    """A single head named ``default`` is not a multi-head checkpoint."""
+    model = torch.load(mace_checkpoint, map_location="cpu", weights_only=False)
+    model.heads = ["default"]
+    lowercase_checkpoint = tmp_path / "lowercase-head.model"
+    torch.save(model, lowercase_checkpoint)
+
+    descriptor = MaceDescriptor(
+        model_path=lowercase_checkpoint,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    assert descriptor.get_dim_out() == 2
+
+
 def test_forward_shape_and_rotation_invariance(mace_checkpoint: Path) -> None:
     """Final ``0e`` features have local-atom shape and are invariant."""
     descriptor = MaceDescriptor(
