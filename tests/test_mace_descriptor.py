@@ -168,6 +168,21 @@ def test_constructor_registry_and_metadata(mace_checkpoint: Path) -> None:
     assert min_distance is None
 
 
+def test_descriptor_supports_first_import_in_fresh_process() -> None:
+    """Importing the descriptor first must not recurse through the PT entry point."""
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from deepmd_gnn.mace_descriptor import MaceDescriptor; "
+            "assert MaceDescriptor.__name__ == 'MaceDescriptor'",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_constructor_requires_exact_checkpoint_type_map(
     mace_checkpoint: Path,
 ) -> None:

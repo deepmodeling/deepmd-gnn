@@ -23,8 +23,8 @@ def _register() -> None:
         BaseModel as PyTorchBaseModel,
     )
 
+    import deepmd_gnn.mace_descriptor  # noqa: F401, PLC0415
     from deepmd_gnn.mace import MaceModel  # noqa: PLC0415
-    from deepmd_gnn.mace_descriptor import MaceDescriptor  # noqa: F401, PLC0415
     from deepmd_gnn.nequip import NequipModel  # noqa: PLC0415
 
     PyTorchBaseModel.register("mace")(MaceModel)
