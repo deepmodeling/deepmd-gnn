@@ -32,9 +32,10 @@ def _register() -> None:
     if not hasattr(MaceModel, "supports_edge_parallel"):
 
         def supports_edge_parallel(_model: object) -> bool:
+            """Report MACE domain-decomposition support."""
             return True
 
-        setattr(MaceModel, "supports_edge_parallel", supports_edge_parallel)
+        MaceModel.supports_edge_parallel = supports_edge_parallel  # type: ignore[attr-defined]
 
     # NeQuIP 0.6/e3nn specializes atom and edge counts during torch.export.
     # Keep pt_expt registration limited to models with dynamic-shape export.
