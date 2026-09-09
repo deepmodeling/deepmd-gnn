@@ -85,7 +85,11 @@ def load_native_mace_checkpoint(
             f"{model.__class__.__module__}.{model.__class__.__name__}"
         )
         raise TypeError(msg)
-    return model
+    # ``map_location`` remaps serialized storages, but e3nn TensorProduct
+    # checkpoints also contain compiled TorchScript submodules.  An explicit
+    # module migration is required to move their Wigner/CG constants; this is
+    # the same two-step loading sequence used by MACECalculator.
+    return model.to(device)
 
 
 def _infer_gate(model: ScaleShiftMACE) -> str:
