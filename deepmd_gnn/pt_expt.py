@@ -70,6 +70,28 @@ def _register() -> None:
         if not hasattr(MaceModel, name):
             setattr(MaceModel, name, method)
 
+    # The legacy PyTorch BaseModel stores min_nbor_dist directly as a tensor
+    # buffer. pt_expt 3.2 assigns the neighbor statistic as a Python float,
+    # while native pt_expt models expose a float property backed by a private
+    # tensor buffer. Convert that assignment at the compatibility boundary so
+    # the inherited get_min_nbor_dist() contract continues to work unchanged.
+    if MaceModel.__setattr__.__name__ != "_pt_expt_setattr":
+        original_setattr = MaceModel.__setattr__
+
+        def _pt_expt_setattr(
+            model: MaceModel,
+            name: str,
+            value: object,
+        ) -> None:
+            """Accept pt_expt's float assignment to the legacy tensor buffer."""
+            if name == "min_nbor_dist" and isinstance(value, (int, float)):
+                buffer = model.__dict__.get("_buffers", {}).get(name)
+                if buffer is not None:
+                    value = buffer.new_tensor(float(value))
+            original_setattr(model, name, value)
+
+        MaceModel.__setattr__ = _pt_expt_setattr  # type: ignore[method-assign]
+
     # NeQuIP 0.6/e3nn specializes atom and edge counts during torch.export.
     # Keep pt_expt registration limited to models with dynamic-shape export.
     ExportableBaseModel.register("mace")(MaceModel)
