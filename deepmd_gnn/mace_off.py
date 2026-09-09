@@ -233,9 +233,7 @@ def _validate_checkpoint_scope(mace_model: ScaleShiftMACE) -> None:
     _validate_atomic_numbers(atomic_numbers)
 
     heads = getattr(mace_model, "heads", None)
-    if heads is not None and (
-        not isinstance(heads, (list, tuple)) or len(heads) != 1
-    ):
+    if heads is not None and (not isinstance(heads, (list, tuple)) or len(heads) != 1):
         msg = f"Multi-head checkpoints are unsupported: heads={heads}"
         raise ValueError(msg)
 
