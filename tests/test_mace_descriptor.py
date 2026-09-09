@@ -244,7 +244,10 @@ def test_mixed_irrep_selects_only_zero_even_content(
     )
     coord_ext, atype_ext, nlist, mapping = _inputs(descriptor)
     all_features = descriptor._final_product_features(  # noqa: SLF001
-        coord_ext, atype_ext, nlist, mapping,
+        coord_ext,
+        atype_ext,
+        nlist,
+        mapping,
     )
     output = descriptor(coord_ext, atype_ext, nlist, mapping=mapping)[0]
     assert descriptor.output_irreps == "2x0e+2x1o"
@@ -427,7 +430,9 @@ def test_checkpoint_feature_parity_and_serialization_roundtrip(
         type_map=["H", "O"],
     )
     original_state = torch.load(
-        mace_checkpoint, map_location="cpu", weights_only=False,
+        mace_checkpoint,
+        map_location="cpu",
+        weights_only=False,
     ).state_dict()
     for name, value in descriptor.backbone.state_dict().items():
         torch.testing.assert_close(value, original_state[name])

@@ -146,11 +146,7 @@ def make_mace_network(
             radial_MLP=radial_MLP,
             radial_type=radial_type,
             cueq_config=make_cueq_config(enable_cueq),
-            **(
-                {"keep_last_layer_irreps": True}
-                if keep_last_layer_irreps
-                else {}
-            ),
+            **({"keep_last_layer_irreps": True} if keep_last_layer_irreps else {}),
         ).to(env.DEVICE)
     finally:
         if optimization_defaults is not None:
