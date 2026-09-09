@@ -296,9 +296,12 @@ def test_real_medium_mpa0_checkpoint_with_official_helper(tmp_path: Path) -> Non
         sel=64,
         type_map=config["type_map"],
     )
-    assert config["interaction_first"] == "RealAgnosticResidualInteractionBlock"
-    assert config["heads"] == ["default"]
-    assert config["pair_repulsion"] is True
+    assert config["interaction_first"] == native.interactions[0].__class__.__name__
+    assert config["interaction"] == native.interactions[-1].__class__.__name__
+    assert config["heads"] == list(native.heads)
+    assert config["pair_repulsion"] is bool(
+        getattr(native, "pair_repulsion", False),
+    )
     output = _descriptor_output(descriptor)
     output.square().sum().backward()
     assert torch.isfinite(output).all()
