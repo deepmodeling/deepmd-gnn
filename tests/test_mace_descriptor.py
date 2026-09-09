@@ -15,6 +15,7 @@ import pytest
 import torch
 from deepmd.pt.model.descriptor.base_descriptor import BaseDescriptor
 from deepmd.pt.model.model import get_model
+from deepmd.pt.utils import env
 from deepmd.pt.utils.nlist import extend_input_and_build_neighbor_list
 from e3nn import o3
 from mace.modules import MACE
@@ -106,7 +107,10 @@ def _inputs(
             [[[0.0, 0.0, 0.0], [0.9, 0.1, 0.0], [-0.2, 1.0, 0.3]]],
             dtype=torch.float64,
         )
-    atype = torch.tensor([[1, 0, 0]], dtype=torch.int64)
+    coord = coord.to(env.DEVICE)
+    atype = torch.tensor([[1, 0, 0]], dtype=torch.int64, device=env.DEVICE)
+    if box is not None:
+        box = box.to(env.DEVICE)
     coord_ext, atype_ext, mapping, nlist = extend_input_and_build_neighbor_list(
         coord.reshape(1, -1),
         atype,
@@ -284,8 +288,9 @@ def test_property_model_composition_and_optimizer_step(
     coord = torch.tensor(
         [[[0.0, 0.0, 0.0], [0.9, 0.1, 0.0], [-0.2, 1.0, 0.3]]],
         dtype=torch.float64,
+        device=env.DEVICE,
     ).reshape(1, -1)
-    atype = torch.tensor([[1, 0, 0]], dtype=torch.int64)
+    atype = torch.tensor([[1, 0, 0]], dtype=torch.int64, device=env.DEVICE)
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
     loss = model(coord, atype)["band_gap"].square().sum()
     optimizer.zero_grad()
@@ -430,7 +435,7 @@ def test_checkpoint_feature_parity_and_serialization_roundtrip(
         mace_checkpoint, map_location="cpu", weights_only=False,
     ).state_dict()
     for name, value in descriptor.backbone.state_dict().items():
-        torch.testing.assert_close(value, original_state[name])
+        torch.testing.assert_close(value.cpu(), original_state[name].cpu())
 
     expected = _descriptor_output(descriptor)
     serialized = descriptor.serialize()
@@ -439,7 +444,10 @@ def test_checkpoint_feature_parity_and_serialization_roundtrip(
     actual = _descriptor_output(restored)
     torch.testing.assert_close(actual, expected)
     for name, value in descriptor.backbone.state_dict().items():
-        torch.testing.assert_close(value, restored.backbone.state_dict()[name])
+        torch.testing.assert_close(
+            value.cpu(),
+            restored.backbone.state_dict()[name].cpu(),
+        )
 
 
 @pytest.mark.slow
@@ -454,8 +462,9 @@ def test_off23_small_checkpoint_features_and_gradients(tmp_path: Path) -> None:
     coord = torch.tensor(
         [[[0.0, 0.0, 0.0], [0.9572, 0.0, 0.0], [-0.2390, 0.9266, 0.0]]],
         dtype=torch.float64,
+        device=env.DEVICE,
     )
-    atype = torch.tensor([[3, 0, 0]], dtype=torch.int64)
+    atype = torch.tensor([[3, 0, 0]], dtype=torch.int64, device=env.DEVICE)
     coord_ext, atype_ext, mapping, nlist = extend_input_and_build_neighbor_list(
         coord.reshape(1, -1),
         atype,
