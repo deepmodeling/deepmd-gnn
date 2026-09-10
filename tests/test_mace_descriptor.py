@@ -343,7 +343,23 @@ def test_periodic_mapping_and_coordinate_gradient(mace_checkpoint: Path) -> None
     )
     box = (torch.eye(3, dtype=torch.float64) * 4.0).reshape(1, 9)
     coord_ext, atype_ext, nlist, mapping = _inputs(descriptor, coord, box)
-    output = descriptor(coord_ext, atype_ext, nlist, mapping=mapping)[0]
+    assert atype_ext.shape[1] > nlist.shape[1]
+    embedded_node_counts = []
+
+    def record_node_count(
+        _module: torch.nn.Module,
+        inputs: tuple[torch.Tensor, ...],
+    ) -> None:
+        embedded_node_counts.append(inputs[0].shape[0])
+
+    handle = descriptor.backbone.node_embedding.register_forward_pre_hook(
+        record_node_count,
+    )
+    try:
+        output = descriptor(coord_ext, atype_ext, nlist, mapping=mapping)[0]
+    finally:
+        handle.remove()
+    assert embedded_node_counts == [nlist.shape[0] * nlist.shape[1]]
     output.square().sum().backward()
     assert coord.grad is not None
     assert torch.count_nonzero(coord.grad)
@@ -362,6 +378,134 @@ def test_periodic_mapping_and_coordinate_gradient(mace_checkpoint: Path) -> None
         mapping=translated_mapping,
     )[0]
     torch.testing.assert_close(output, translated_output, rtol=2e-6, atol=2e-7)
+
+
+def test_final_features_match_native_mace_forward(mace_checkpoint: Path) -> None:
+    """The compact graph adapter preserves MACE's final product features."""
+    native = load_native_mace_checkpoint(mace_checkpoint, device=env.DEVICE)
+    descriptor = MaceDescriptor(
+        model_path=mace_checkpoint,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    coord_ext, atype_ext, nlist, mapping = _inputs(descriptor)
+    del mapping
+    nf, nloc, _ = nlist.shape
+    source_dtype = next(native.parameters()).dtype
+    positions = coord_ext.view(nf * nloc, 3).to(source_dtype)
+    atype = atype_ext[:, :nloc].to(torch.int64)
+    edge_index = torch.ops.deepmd_gnn.edge_index(
+        nlist.to(torch.int64),
+        atype_ext.to(torch.int64),
+        torch.empty(0, dtype=torch.int64, device="cpu"),
+    ).T
+    node_attrs = torch.zeros(
+        (nf * nloc, descriptor.ntypes),
+        dtype=source_dtype,
+        device=env.DEVICE,
+    )
+    node_attrs.scatter_(-1, atype.reshape(-1, 1), 1)
+    native_output = native(
+        {
+            "positions": positions,
+            "node_attrs": node_attrs,
+            "edge_index": edge_index,
+            "shifts": torch.zeros(
+                (edge_index.shape[1], 3),
+                dtype=source_dtype,
+                device=env.DEVICE,
+            ),
+            "cell": torch.zeros(
+                (nf, 3, 3),
+                dtype=source_dtype,
+                device=env.DEVICE,
+            ),
+            "batch": torch.arange(nf, device=env.DEVICE)
+            .unsqueeze(-1)
+            .expand(nf, nloc)
+            .reshape(-1),
+            "ptr": torch.arange(
+                0,
+                (nf + 1) * nloc,
+                nloc,
+                dtype=torch.int64,
+                device=env.DEVICE,
+            ),
+        },
+        compute_force=False,
+    )["node_feats"]
+    assert native_output is not None
+    final_dim = native.products[-1].linear.irreps_out.dim
+    native_final = native_output[:, -final_dim:].view(nf, nloc, final_dim)
+    expected = torch.index_select(
+        native_final,
+        -1,
+        descriptor._scalar_indices.to(env.DEVICE),  # noqa: SLF001
+    ).to(env.GLOBAL_PT_FLOAT_PRECISION)
+    actual = descriptor(coord_ext, atype_ext, nlist)[0]
+    torch.testing.assert_close(actual, expected)
+
+
+def test_compact_periodic_mapping_handles_multiple_frames(
+    mace_checkpoint: Path,
+) -> None:
+    """Compact node indices preserve independent frames with periodic images."""
+    descriptor = MaceDescriptor(
+        model_path=mace_checkpoint,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    coord = torch.tensor(
+        [
+            [[0.1, 0.2, 0.3], [3.8, 0.2, 0.3], [0.2, 3.7, 0.4]],
+            [[0.2, 0.1, 0.4], [3.7, 0.3, 0.2], [0.3, 3.6, 0.5]],
+        ],
+        dtype=torch.float64,
+        device=env.DEVICE,
+    )
+    atype = torch.tensor(
+        [[1, 0, 0], [1, 0, 0]],
+        dtype=torch.int64,
+        device=env.DEVICE,
+    )
+    box = (
+        torch.eye(3, dtype=torch.float64, device=env.DEVICE)
+        .mul(4.0)
+        .reshape(1, 9)
+        .expand(2, 9)
+    )
+    coord_ext, atype_ext, mapping, nlist = extend_input_and_build_neighbor_list(
+        coord.reshape(2, -1),
+        atype,
+        descriptor.get_rcut(),
+        descriptor.get_sel(),
+        mixed_types=True,
+        box=box,
+    )
+    assert atype_ext.shape[1] > nlist.shape[1]
+    batched = descriptor(coord_ext, atype_ext, nlist, mapping=mapping)[0]
+
+    per_frame = []
+    for frame in range(2):
+        frame_coord_ext, frame_atype_ext, frame_mapping, frame_nlist = (
+            extend_input_and_build_neighbor_list(
+                coord[frame : frame + 1].reshape(1, -1),
+                atype[frame : frame + 1],
+                descriptor.get_rcut(),
+                descriptor.get_sel(),
+                mixed_types=True,
+                box=box[frame : frame + 1],
+            )
+        )
+        per_frame.append(
+            descriptor(
+                frame_coord_ext,
+                frame_atype_ext,
+                frame_nlist,
+                mapping=frame_mapping,
+            )[0],
+        )
+    torch.testing.assert_close(batched, torch.cat(per_frame))
 
 
 def test_mixed_irrep_selects_only_zero_even_content(

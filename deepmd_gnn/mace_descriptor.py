@@ -267,38 +267,32 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             atype,
             torch.empty(0, dtype=torch.int64, device="cpu"),
         ).T
-        shifts = torch.zeros(
-            (edge_index.shape[1], 3),
-            dtype=source_dtype,
-            device=positions_flat.device,
-        )
-
-        if self.num_interactions > 1 and mapping is not None and nloc < nall:
-            mapping_flat = mapping.reshape(-1) + torch.arange(
-                0,
-                nf * nall,
-                nall,
-                dtype=mapping.dtype,
-                device=mapping.device,
-            ).unsqueeze(-1).expand(nf, nall).reshape(-1)
-            image_shifts = positions_flat - positions_flat[mapping_flat]
-            shifts = image_shifts[edge_index[1]] - image_shifts[edge_index[0]]
-            edge_index = mapping_flat[edge_index]
-        elif self.num_interactions > 1 and nloc < nall:
-            msg = "Multi-layer MACE descriptor requires mapping for extended atoms"
-            raise ValueError(msg)
-
         vectors = positions_flat[edge_index[1]] - positions_flat[edge_index[0]]
-        vectors = vectors + shifts
+        if nloc < nall:
+            if mapping is None:
+                msg = "MACE descriptor requires mapping for extended atoms"
+                raise ValueError(msg)
+            compact_mapping = (
+                mapping.to(torch.int64)
+                + torch.arange(
+                    nf,
+                    dtype=torch.int64,
+                    device=mapping.device,
+                ).unsqueeze(-1)
+                * nloc
+            )
+            edge_index = compact_mapping.reshape(-1)[edge_index]
+
         lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)
+        local_atype = atype[:, :nloc].reshape(-1)
         node_attrs = torch.zeros(
-            (nf * nall, self.ntypes),
+            (nf * nloc, self.ntypes),
             dtype=source_dtype,
             device=positions_flat.device,
         )
         node_attrs.scatter_(
             -1,
-            atype.reshape(-1, 1),
+            local_atype.unsqueeze(-1),
             1,
         )
         node_feats = self.backbone.node_embedding(node_attrs)
@@ -326,7 +320,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                 sc=sc,
                 node_attrs=node_attrs,
             )
-        return node_feats.view(nf, nall, -1)[:, :nloc]
+        return node_feats.view(nf, nloc, -1)
 
     def forward(
         self,
