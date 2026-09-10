@@ -140,6 +140,17 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         empty = torch.empty(0, dtype=env.GLOBAL_PT_FLOAT_PRECISION, device=env.DEVICE)
         self.register_buffer("_stat_mean", empty.clone(), persistent=False)
         self.register_buffer("_stat_stddev", empty.clone(), persistent=False)
+        # TorchScript cannot call ``next(self.backbone.parameters())``; keep a
+        # zero-size buffer whose dtype/device follow the feature backbone.
+        self.register_buffer(
+            "_backbone_probe",
+            torch.empty(
+                0,
+                dtype=next(self.backbone.parameters()).dtype,
+                device=env.DEVICE,
+            ),
+            persistent=False,
+        )
         for parameter in self.backbone.parameters():
             parameter.requires_grad_(self.trainable)
 
@@ -238,6 +249,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             msg = "MACE descriptor only supports full-backbone sharing at level 0"
             raise NotImplementedError(msg)
         self.backbone = base_class.backbone
+        self._backbone_probe = base_class._backbone_probe
 
     def change_type_map(
         self,
@@ -259,7 +271,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         nf, nloc, _ = nlist.shape
         nall = extended_atype.shape[1]
         positions = extended_coord.view(nf, nall, 3)
-        source_dtype = next(self.backbone.parameters()).dtype
+        source_dtype = self._backbone_probe.dtype
         positions_flat = positions.to(source_dtype).flatten(0, 1)
         atype = extended_atype.to(torch.int64)
         edge_index = torch.ops.deepmd_gnn.edge_index(
@@ -303,8 +315,10 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             edge_index,
             self.backbone.atomic_numbers,
         )
-        for index, (interaction, product) in enumerate(
-            zip(self.backbone.interactions, self.backbone.products, strict=True),
+        first_layer = True
+        for interaction, product in zip(
+            self.backbone.interactions,
+            self.backbone.products,
         ):
             node_feats, sc = interaction(
                 node_attrs=node_attrs,
@@ -313,13 +327,14 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                 edge_feats=edge_feats,
                 edge_index=edge_index,
                 cutoff=cutoff,
-                first_layer=index == 0,
+                first_layer=first_layer,
             )
             node_feats = product(
                 node_feats=node_feats,
                 sc=sc,
                 node_attrs=node_attrs,
             )
+            first_layer = False
         return node_feats.view(nf, nloc, -1)
 
     def forward(
@@ -355,7 +370,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             index=self._scalar_indices.to(features.device),
         )
         return (
-            invariant.to(env.GLOBAL_PT_FLOAT_PRECISION),
+            invariant.to(self._stat_mean.dtype),
             None,
             None,
             None,

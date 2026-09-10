@@ -329,6 +329,49 @@ def test_forward_shape_and_rotation_invariance(mace_checkpoint: Path) -> None:
     torch.testing.assert_close(output, rotated, rtol=2e-6, atol=2e-7)
 
 
+def test_descriptor_forward_is_torchscriptable(mace_checkpoint: Path) -> None:
+    """``dp test`` scripts the eager checkpoint; forward must not use Python builtins."""
+    descriptor = MaceDescriptor(
+        model_path=mace_checkpoint,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    coord_ext, atype_ext, nlist, mapping = _inputs(descriptor)
+    expected = descriptor(coord_ext, atype_ext, nlist, mapping=mapping)[0]
+    scripted = torch.jit.script(descriptor)
+    actual = scripted(coord_ext, atype_ext, nlist, mapping)[0]
+    torch.testing.assert_close(actual, expected)
+
+    model = get_model(
+        {
+            "type": "standard",
+            "type_map": ["H", "O"],
+            "descriptor": {
+                "type": "mace",
+                "model_path": str(mace_checkpoint),
+                "sel": 16,
+            },
+            "fitting_net": {
+                "type": "property",
+                "property_name": "band_gap",
+                "task_dim": 1,
+                "neuron": [8, 8],
+                "precision": "float64",
+            },
+        },
+    )
+    coord = torch.tensor(
+        [[[0.0, 0.0, 0.0], [0.9, 0.1, 0.0], [-0.2, 1.0, 0.3]]],
+        dtype=torch.float64,
+        device=env.DEVICE,
+    ).reshape(1, -1)
+    atype = torch.tensor([[1, 0, 0]], dtype=torch.int64, device=env.DEVICE)
+    expected_pred = model(coord, atype)["band_gap"]
+    scripted_model = torch.jit.script(model)
+    actual_pred = scripted_model(coord, atype)["band_gap"]
+    torch.testing.assert_close(actual_pred, expected_pred)
+
+
 def test_periodic_mapping_and_coordinate_gradient(mace_checkpoint: Path) -> None:
     """Periodic images follow MaceModel mapping without breaking gradients."""
     descriptor = MaceDescriptor(
