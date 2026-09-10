@@ -367,7 +367,16 @@ def test_descriptor_forward_is_torchscriptable(mace_checkpoint: Path) -> None:
     ).reshape(1, -1)
     atype = torch.tensor([[1, 0, 0]], dtype=torch.int64, device=env.DEVICE)
     expected_pred = model(coord, atype)["band_gap"]
+    helper_buffers = (
+        "_scalar_indices",
+        "_stat_mean",
+        "_stat_stddev",
+        "_backbone_probe",
+    )
+    eager_state = model.state_dict()
+    assert not any(any(name in key for name in helper_buffers) for key in eager_state)
     scripted_model = torch.jit.script(model)
+    scripted_model.load_state_dict(eager_state)
     actual_pred = scripted_model(coord, atype)["band_gap"]
     torch.testing.assert_close(actual_pred, expected_pred)
 
@@ -483,7 +492,11 @@ def test_final_features_match_native_mace_forward(mace_checkpoint: Path) -> None
     expected = torch.index_select(
         native_final,
         -1,
-        descriptor._scalar_indices.to(env.DEVICE),  # noqa: SLF001
+        torch.tensor(
+            descriptor.scalar_even_indices,
+            dtype=torch.int64,
+            device=env.DEVICE,
+        ),
     ).to(env.GLOBAL_PT_FLOAT_PRECISION)
     actual = descriptor(coord_ext, atype_ext, nlist)[0]
     torch.testing.assert_close(actual, expected)

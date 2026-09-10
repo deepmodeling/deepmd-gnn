@@ -132,25 +132,11 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             msg = f"Final MACE product output has no 0e channels: {output_irreps}"
             raise ValueError(msg)
         self.output_irreps = str(output_irreps)
-        self.register_buffer(
-            "_scalar_indices",
-            torch.tensor(scalar_indices, dtype=torch.int64, device=env.DEVICE),
-            persistent=False,
-        )
-        empty = torch.empty(0, dtype=env.GLOBAL_PT_FLOAT_PRECISION, device=env.DEVICE)
-        self.register_buffer("_stat_mean", empty.clone(), persistent=False)
-        self.register_buffer("_stat_stddev", empty.clone(), persistent=False)
-        # TorchScript cannot call ``next(self.backbone.parameters())``; keep a
-        # zero-size buffer whose dtype/device follow the feature backbone.
-        self.register_buffer(
-            "_backbone_probe",
-            torch.empty(
-                0,
-                dtype=next(self.backbone.parameters()).dtype,
-                device=env.DEVICE,
-            ),
-            persistent=False,
-        )
+        # Keep these as plain attributes: jit.script promotes registered
+        # buffers into state_dict keys, which then fail to load training
+        # checkpoints that never saved them.
+        self.scalar_even_indices = scalar_indices
+        self.backbone_float64 = next(self.backbone.parameters()).dtype == torch.float64
         for parameter in self.backbone.parameters():
             parameter.requires_grad_(self.trainable)
 
@@ -176,7 +162,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
 
     def get_dim_out(self) -> int:
         """Return the number of final-layer ``0e`` channels."""
-        return int(self._scalar_indices.numel())
+        return len(self.scalar_even_indices)
 
     def get_dim_emb(self) -> int:
         """Return the invariant feature width."""
@@ -232,7 +218,8 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
 
     def get_stat_mean_and_stddev(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Return empty compatibility statistics."""
-        return self._stat_mean, self._stat_stddev
+        empty = torch.empty(0, dtype=env.GLOBAL_PT_FLOAT_PRECISION, device=env.DEVICE)
+        return empty, empty.clone()
 
     def share_params(
         self,
@@ -249,7 +236,8 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             msg = "MACE descriptor only supports full-backbone sharing at level 0"
             raise NotImplementedError(msg)
         self.backbone = base_class.backbone
-        self._backbone_probe = base_class._backbone_probe
+        self.scalar_even_indices = base_class.scalar_even_indices
+        self.backbone_float64 = base_class.backbone_float64
 
     def change_type_map(
         self,
@@ -271,7 +259,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         nf, nloc, _ = nlist.shape
         nall = extended_atype.shape[1]
         positions = extended_coord.view(nf, nall, 3)
-        source_dtype = self._backbone_probe.dtype
+        source_dtype = torch.float64 if self.backbone_float64 else torch.float32
         positions_flat = positions.to(source_dtype).flatten(0, 1)
         atype = extended_atype.to(torch.int64)
         edge_index = torch.ops.deepmd_gnn.edge_index(
@@ -316,7 +304,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             self.backbone.atomic_numbers,
         )
         first_layer = True
-        for interaction, product in zip(
+        for interaction, product in zip(  # noqa: B905
             self.backbone.interactions,
             self.backbone.products,
         ):
@@ -364,13 +352,18 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             nlist,
             mapping,
         )
+        scalar_index = torch.tensor(
+            self.scalar_even_indices,
+            dtype=torch.int64,
+            device=features.device,
+        )
         invariant = torch.index_select(
             features,
             dim=-1,
-            index=self._scalar_indices.to(features.device),
+            index=scalar_index,
         )
         return (
-            invariant.to(self._stat_mean.dtype),
+            invariant.to(env.GLOBAL_PT_FLOAT_PRECISION),
             None,
             None,
             None,
