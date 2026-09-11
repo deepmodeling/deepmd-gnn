@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import importlib
 import io
-from contextlib import contextmanager, redirect_stdout
+from contextlib import redirect_stdout
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
@@ -19,9 +19,10 @@ from typing import TYPE_CHECKING, TypedDict
 import torch
 
 from deepmd_gnn.mace_off_cli import download_mace_off_model
+from deepmd_gnn.precision import precision_from_dtype
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
     from mace.modules import ScaleShiftMACE
 
@@ -84,16 +85,6 @@ def _load_e3nn_script() -> Callable[[torch.nn.Module], torch.nn.Module]:
     with redirect_stdout(io.StringIO()):
         e3nn_jit = importlib.import_module("e3nn.util.jit")
     return e3nn_jit.script
-
-
-@contextmanager
-def _temporary_default_dtype(dtype: torch.dtype) -> Iterator[None]:
-    old_dtype = torch.get_default_dtype()
-    torch.set_default_dtype(dtype)
-    try:
-        yield
-    finally:
-        torch.set_default_dtype(old_dtype)
 
 
 def _validate_atomic_numbers(atomic_numbers: list[int]) -> None:
@@ -356,27 +347,27 @@ def load_mace_off_model(
     mace_model_cls = _load_deepmd_mace_symbols()[1]
 
     source_dtype = mace_model.atomic_energies_fn.atomic_energies.dtype
-    with _temporary_default_dtype(source_dtype):
-        deepmd_model = mace_model_cls(
-            type_map=config["type_map"],
-            sel=sel,
-            r_max=config["r_max"],
-            num_radial_basis=config["num_radial_basis"],
-            num_cutoff_basis=config["num_cutoff_basis"],
-            max_ell=config["max_ell"],
-            interaction=config["interaction"],
-            num_interactions=config["num_interactions"],
-            hidden_irreps=config["hidden_irreps"],
-            pair_repulsion=config["pair_repulsion"],
-            distance_transform=config["distance_transform"],
-            correlation=config["correlation"],
-            gate=config["gate"],
-            MLP_irreps=config["MLP_irreps"],
-            radial_type=config["radial_type"],
-            radial_MLP=config["radial_MLP"],
-            std=config["std"],
-            avg_num_neighbors=config["avg_num_neighbors"],
-        )
+    deepmd_model = mace_model_cls(
+        type_map=config["type_map"],
+        sel=sel,
+        r_max=config["r_max"],
+        num_radial_basis=config["num_radial_basis"],
+        num_cutoff_basis=config["num_cutoff_basis"],
+        max_ell=config["max_ell"],
+        interaction=config["interaction"],
+        num_interactions=config["num_interactions"],
+        hidden_irreps=config["hidden_irreps"],
+        pair_repulsion=config["pair_repulsion"],
+        distance_transform=config["distance_transform"],
+        correlation=config["correlation"],
+        gate=config["gate"],
+        MLP_irreps=config["MLP_irreps"],
+        radial_type=config["radial_type"],
+        radial_MLP=config["radial_MLP"],
+        std=config["std"],
+        avg_num_neighbors=config["avg_num_neighbors"],
+        precision=precision_from_dtype(source_dtype),
+    )
 
     load_result = deepmd_model.model.load_state_dict(
         mace_model.state_dict(),
