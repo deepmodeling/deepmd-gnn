@@ -66,7 +66,7 @@ conda install deepmd-gnn -c conda-forge
 First, clone this repository:
 
 ```sh
-git clone https://gitlab.com/RutgersLBSR/deepmd-gnn
+git clone https://github.com/deepmodeling/deepmd-gnn.git
 cd deepmd-gnn
 ```
 
