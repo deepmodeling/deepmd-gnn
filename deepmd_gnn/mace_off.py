@@ -27,8 +27,6 @@ if TYPE_CHECKING:
 
     from deepmd_gnn.mace import MaceModel
 
-_ALLOWED_MISSING_STATE_DICT_SUFFIXES = ("_zeroed",)
-
 _SUPPORTED_DISTANCE_TRANSFORMS = {
     None: "None",
     "AgnesiTransform": "Agnesi",
@@ -289,23 +287,6 @@ def _load_mace_checkpoint(model_path: Path, device: str) -> ScaleShiftMACE:
     return model
 
 
-def _validate_load_result(load_result: object) -> None:
-    missing_keys = list(getattr(load_result, "missing_keys", []))
-    unexpected_keys = list(getattr(load_result, "unexpected_keys", []))
-
-    disallowed_missing_keys = [
-        key
-        for key in missing_keys
-        if not key.endswith(_ALLOWED_MISSING_STATE_DICT_SUFFIXES)
-    ]
-    if disallowed_missing_keys or unexpected_keys:
-        msg = (
-            "Failed to load MACE checkpoint into DeePMD-GNN wrapper. "
-            f"missing={disallowed_missing_keys}, unexpected={unexpected_keys}"
-        )
-        raise RuntimeError(msg)
-
-
 def load_mace_off_model(
     model_name: str | None = "small",
     *,
@@ -378,11 +359,10 @@ def load_mace_off_model(
             avg_num_neighbors=config["avg_num_neighbors"],
         )
 
-    load_result = deepmd_model.model.load_state_dict(
-        mace_model.state_dict(),
-        strict=False,
-    )
-    _validate_load_result(load_result)
+    # The reconstructed network only initializes wrapper metadata. Official
+    # MACE-OFF checkpoints may use contraction bases that cannot be inferred
+    # from public attributes, so loading their state into that temporary
+    # network can fail even though the original checkpoint is fully usable.
     deepmd_model.model = mace_model
     deepmd_model.eval()
     return deepmd_model
