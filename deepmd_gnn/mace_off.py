@@ -27,8 +27,6 @@ if TYPE_CHECKING:
 
     from deepmd_gnn.mace import MaceModel
 
-_ALLOWED_MISSING_STATE_DICT_SUFFIXES = ("_zeroed",)
-
 _SUPPORTED_DISTANCE_TRANSFORMS = {
     None: "None",
     "AgnesiTransform": "Agnesi",
@@ -296,20 +294,11 @@ def _load_mace_checkpoint(model_path: Path, device: str) -> ScaleShiftMACE:
 
 
 def _validate_load_result(load_result: object) -> None:
-    missing_keys = list(getattr(load_result, "missing_keys", []))
-    unexpected_keys = list(getattr(load_result, "unexpected_keys", []))
+    from deepmd_gnn.mace_checkpoint import (  # noqa: PLC0415
+        validate_mace_state_dict_load,
+    )
 
-    disallowed_missing_keys = [
-        key
-        for key in missing_keys
-        if not key.endswith(_ALLOWED_MISSING_STATE_DICT_SUFFIXES)
-    ]
-    if disallowed_missing_keys or unexpected_keys:
-        msg = (
-            "Failed to load MACE checkpoint into DeePMD-GNN wrapper. "
-            f"missing={disallowed_missing_keys}, unexpected={unexpected_keys}"
-        )
-        raise RuntimeError(msg)
+    validate_mace_state_dict_load(load_result)
 
 
 def load_mace_off_model(

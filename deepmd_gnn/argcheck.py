@@ -23,10 +23,21 @@ def mace_descriptor_args() -> Argument:
             Argument(
                 "model_path",
                 str,
-                optional=False,
+                optional=True,
                 doc=(
                     "Path to a trusted native mace.modules.ScaleShiftMACE "
-                    "pickle checkpoint."
+                    "pickle checkpoint. Required for initialization; saved "
+                    "DeePMD checkpoints restore from the persisted config."
+                ),
+            ),
+            Argument(
+                "config",
+                dict,
+                optional=True,
+                doc=(
+                    "Inferred MACE backbone architecture persisted into the "
+                    "saved model definition so restoration does not reopen "
+                    "the native pickle."
                 ),
             ),
             Argument(

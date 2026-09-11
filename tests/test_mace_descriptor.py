@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -24,6 +25,7 @@ from mace.modules import MACE
 from deepmd_gnn.mace_checkpoint import (
     inspect_native_mace_checkpoint,
     load_native_mace_checkpoint,
+    validate_mace_state_dict_load,
 )
 from deepmd_gnn.mace_descriptor import (
     MaceDescriptor,
@@ -41,6 +43,8 @@ def _write_mace_checkpoint(
     interaction_first: str = "RealAgnosticInteractionBlock",
     heads: list[str] | None = None,
     correlation: int | list[int] = 2,
+    num_interactions: int = 2,
+    gate: str = "silu",
 ) -> Path:
     """Write a tiny native checkpoint with no network access."""
     old_dtype = torch.get_default_dtype()
@@ -53,7 +57,7 @@ def _write_mace_checkpoint(
             max_ell=1,
             interaction_first=interaction_first,
             interaction="RealAgnosticResidualInteractionBlock",
-            num_interactions=2,
+            num_interactions=num_interactions,
             num_elements=2,
             hidden_irreps="2x0e + 2x1o",
             atomic_numbers=[1, 8],
@@ -61,7 +65,7 @@ def _write_mace_checkpoint(
             pair_repulsion=pair_repulsion,
             distance_transform="None",
             correlation=correlation,
-            gate="silu",
+            gate=gate,
             MLP_irreps="4x0e",
             std=1.0,
             radial_MLP=[8, 8],
@@ -173,6 +177,7 @@ def test_constructor_registry_and_metadata(mace_checkpoint: Path) -> None:
     assert descriptor.has_message_passing()
     assert not descriptor.has_message_passing_across_ranks()
     assert all(parameter.requires_grad for parameter in descriptor.parameters())
+    assert descriptor.get_default_chg_spin() is None
     descriptor.set_stat_mean_and_stddev(torch.ones(1), torch.ones(1))
     mean, stddev = descriptor.get_stat_mean_and_stddev()
     assert mean.numel() == 0
@@ -188,7 +193,11 @@ def test_constructor_registry_and_metadata(mace_checkpoint: Path) -> None:
         ["H", "O"],
         local_config,
     )
-    assert updated == local_config
+    assert updated["model_path"] == str(mace_checkpoint)
+    assert updated["sel"] == 16
+    assert updated["config"]["type_map"] == ["H", "O"]
+    assert updated["config"]["hidden_irreps"]
+    json.dumps(updated)
     assert min_distance is None
 
 
@@ -232,6 +241,75 @@ def test_constructor_rejects_truly_multi_head_checkpoint(tmp_path: Path) -> None
             sel=16,
             type_map=["H", "O"],
         )
+
+
+def test_feature_backbone_accepts_linear_or_ungated_readouts(tmp_path: Path) -> None:
+    """Energy-head readout metadata is unused and must not block inspection."""
+    linear_path = _write_mace_checkpoint(
+        tmp_path / "linear_readout.model",
+        keep_last_layer_irreps=False,
+        num_interactions=1,
+    )
+    linear_native = load_native_mace_checkpoint(linear_path, device=env.DEVICE)
+    linear_config = inspect_native_mace_checkpoint(linear_native)
+    assert not hasattr(linear_native.readouts[-1], "hidden_irreps")
+    assert linear_config["MLP_irreps"]
+    assert linear_config["gate"]
+    linear_descriptor = MaceDescriptor(
+        model_path=linear_path,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    assert _descriptor_output(linear_descriptor).shape[-1] == 2
+
+    ungated_path = _write_mace_checkpoint(
+        tmp_path / "ungated_readout.model",
+        keep_last_layer_irreps=False,
+        gate="None",
+    )
+    ungated_native = load_native_mace_checkpoint(ungated_path, device=env.DEVICE)
+    ungated_config = inspect_native_mace_checkpoint(ungated_native)
+    assert ungated_config["gate"] == "None"
+    ungated_descriptor = MaceDescriptor(
+        model_path=ungated_path,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    assert _descriptor_output(ungated_descriptor).shape[-1] == 2
+
+
+def test_deserialize_keeps_derived_zeroed_buffers(mace_checkpoint: Path) -> None:
+    """Older native pickles omit reconstructed ``*_zeroed`` buffers."""
+    validate_mace_state_dict_load(
+        SimpleNamespace(
+            missing_keys=["products.0.symmetric_contractions.weights_0_zeroed"],
+            unexpected_keys=[],
+        ),
+    )
+    with pytest.raises(RuntimeError, match=r"node_embedding\.linear\.weight"):
+        validate_mace_state_dict_load(
+            SimpleNamespace(
+                missing_keys=["node_embedding.linear.weight"],
+                unexpected_keys=[],
+            ),
+        )
+
+    descriptor = MaceDescriptor(
+        model_path=mace_checkpoint,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    serialized = descriptor.serialize()
+    serialized["@variables"] = {
+        name: value
+        for name, value in serialized["@variables"].items()
+        if not name.endswith("_zeroed")
+    }
+    restored = BaseDescriptor.deserialize(serialized)
+    torch.testing.assert_close(
+        _descriptor_output(restored),
+        _descriptor_output(descriptor),
+    )
 
 
 def test_mpa_like_checkpoint_roundtrip_and_gradient(
@@ -635,6 +713,55 @@ def test_property_model_composition_and_optimizer_step(
     assert not torch.equal(fitting_before, fitting_parameter)
 
 
+def test_get_model_restores_without_source_checkpoint(
+    mace_checkpoint: Path,
+    tmp_path: Path,
+) -> None:
+    """Saved model definitions reconstruct the backbone without the native pickle."""
+    updated, _ = MaceDescriptor.update_sel(
+        None,
+        ["H", "O"],
+        {
+            "type": "mace",
+            "model_path": str(mace_checkpoint),
+            "sel": 16,
+        },
+    )
+    original = MaceDescriptor(
+        model_path=mace_checkpoint,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    missing = tmp_path / "missing_source.model"
+    restored = get_model(
+        {
+            "type": "standard",
+            "type_map": ["H", "O"],
+            "descriptor": {
+                **updated,
+                "model_path": str(missing),
+            },
+            "fitting_net": {
+                "type": "property",
+                "property_name": "band_gap",
+                "task_dim": 1,
+                "neuron": [8],
+                "precision": "float64",
+            },
+        },
+    )
+    validate_mace_state_dict_load(
+        restored.get_descriptor().backbone.load_state_dict(
+            original.backbone.state_dict(),
+            strict=False,
+        ),
+    )
+    torch.testing.assert_close(
+        _descriptor_output(restored.get_descriptor()),
+        _descriptor_output(original),
+    )
+
+
 def test_dp_property_training_smoke(
     mace_checkpoint: Path,
     tmp_path: Path,
@@ -752,6 +879,23 @@ def test_dp_property_training_smoke(
     assert compared > 0
     assert changed > 0
 
+    extra_params = trained_state["_extra_state"]["model_params"]
+    assert extra_params["descriptor"]["config"]["type_map"] == ["H", "O"]
+    hidden_source = mace_checkpoint.with_name("hidden_source.model")
+    mace_checkpoint.rename(hidden_source)
+    from deepmd.pt.infer.inference import Tester  # noqa: PLC0415
+    from deepmd.pt.utils.env import DEVICE  # noqa: PLC0415
+
+    tester = Tester(str(saved_checkpoint))
+    coord = torch.tensor(
+        [[[0.0, 0.0, 0.0], [0.9, 0.1, 0.0], [-0.2, 1.0, 0.3]]],
+        dtype=torch.float64,
+        device=DEVICE,
+    ).reshape(1, -1)
+    atype = torch.tensor([[1, 0, 0]], dtype=torch.int64, device=DEVICE)
+    prediction, _, _ = tester.wrapper(coord, atype)
+    assert torch.isfinite(prediction["band_gap"]).all()
+
 
 def test_checkpoint_feature_parity_and_serialization_roundtrip(
     mace_checkpoint: Path,
@@ -813,4 +957,9 @@ def test_off23_small_checkpoint_features_and_gradients(tmp_path: Path) -> None:
     assert any(
         parameter.grad is not None and torch.count_nonzero(parameter.grad)
         for parameter in descriptor.backbone.parameters()
+    )
+    restored = BaseDescriptor.deserialize(descriptor.serialize())
+    torch.testing.assert_close(
+        restored(coord_ext, atype_ext, nlist, mapping=mapping)[0],
+        output.detach(),
     )

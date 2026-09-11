@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import torch
 from deepmd.pt.model.descriptor.base_descriptor import BaseDescriptor
@@ -20,6 +20,8 @@ from deepmd_gnn.mace_checkpoint import (
     build_mace_feature_backbone,
     inspect_native_mace_checkpoint,
     load_native_mace_checkpoint,
+    persistable_checkpoint_config,
+    validate_mace_state_dict_load,
 )
 
 if TYPE_CHECKING:
@@ -85,22 +87,15 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         if ntypes is not None and ntypes != len(type_map):
             msg = f"ntypes={ntypes} does not match type_map length {len(type_map)}"
             raise ValueError(msg)
-        if (model_path is None) == (config is None):
-            msg = (
-                "Exactly one of model_path (initialization) or config "
-                "(deserialization) must be provided"
-            )
-            raise ValueError(msg)
 
         self.sel = int(sel)
         self.type_map = list(type_map)
         self.ntypes = len(self.type_map)
         self.trainable = bool(trainable)
-        self.model_path = None if model_path is None else str(model_path)
-
-        if model_path is not None:
+        source_path = None if model_path is None else Path(model_path)
+        if source_path is not None and source_path.is_file():
             model = load_native_mace_checkpoint(
-                Path(model_path),
+                source_path,
                 device=str(env.DEVICE),
             )
             inferred = inspect_native_mace_checkpoint(model)
@@ -111,10 +106,14 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                     f"ordering: expected {checkpoint_type_map}, got {self.type_map}"
                 )
                 raise ValueError(msg)
-            self.config = dict(inferred)
+            self.config = persistable_checkpoint_config(inferred)
+            if config is not None:
+                config.clear()
+                config.update(self.config)
+            self.model_path = str(source_path)
             self.backbone = MaceFeatureBackbone(model)
-        else:
-            self.config = deepcopy(cast("dict[str, Any]", config))
+        elif config is not None:
+            self.config = persistable_checkpoint_config(config)
             checkpoint_type_map = self.config.get("type_map", self.type_map)
             if self.type_map != checkpoint_type_map:
                 msg = (
@@ -122,7 +121,17 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                     f"expected {checkpoint_type_map}, got {self.type_map}"
                 )
                 raise ValueError(msg)
+            self.model_path = None
             self.backbone = build_mace_feature_backbone(self.config)
+        elif source_path is not None:
+            msg = f"MACE checkpoint not found: {source_path}"
+            raise FileNotFoundError(msg)
+        else:
+            msg = (
+                "Exactly one of model_path (initialization) or config "
+                "(deserialization) must be provided"
+            )
+            raise ValueError(msg)
 
         self.rcut = float(self.config["r_max"])
         self.num_interactions = int(self.config["num_interactions"])
@@ -139,6 +148,10 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         self.backbone_float64 = next(self.backbone.parameters()).dtype == torch.float64
         for parameter in self.backbone.parameters():
             parameter.requires_grad_(self.trainable)
+
+    def get_default_chg_spin(self) -> None:
+        """Return no charge/spin defaults with a concrete TorchScript type."""
+        return None  # noqa: RET501
 
     def get_rcut(self) -> float:
         """Return the checkpoint cutoff radius."""
@@ -403,7 +416,9 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             for name, value in data.pop("@variables").items()
         }
         descriptor = cls(**data)
-        descriptor.backbone.load_state_dict(variables, strict=True)
+        validate_mace_state_dict_load(
+            descriptor.backbone.load_state_dict(variables, strict=False),
+        )
         return descriptor
 
     @classmethod
@@ -413,13 +428,27 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         type_map: list[str] | None,
         local_jdata: dict,
     ) -> tuple[dict, float | None]:
-        """Validate the required explicit neighbor-list capacity."""
-        del train_data, type_map
+        """Persist inferred architecture and validate neighbor-list capacity."""
+        del train_data
         local_jdata = local_jdata.copy()
         sel = local_jdata.get("sel")
         if not isinstance(sel, int) or isinstance(sel, bool) or sel <= 0:
             msg = "MACE descriptor requires an explicit positive integer sel"
             raise ValueError(msg)
+        model_path = local_jdata.get("model_path")
+        if model_path:
+            model = load_native_mace_checkpoint(Path(model_path), device="cpu")
+            inferred = persistable_checkpoint_config(
+                inspect_native_mace_checkpoint(model),
+            )
+            checkpoint_type_map = inferred["type_map"]
+            if type_map is not None and list(type_map) != checkpoint_type_map:
+                msg = (
+                    "Model-level type_map must exactly match checkpoint atomic-number "
+                    f"ordering: expected {checkpoint_type_map}, got {list(type_map)}"
+                )
+                raise ValueError(msg)
+            local_jdata["config"] = inferred
         return local_jdata, None
 
 

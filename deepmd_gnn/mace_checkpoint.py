@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import torch
@@ -21,6 +22,9 @@ _DISTANCE_TRANSFORMS = {
     "SoftTransform": "Soft",
 }
 _RADIAL_BASES = {"BesselBasis": "bessel"}
+ALLOWED_MISSING_STATE_DICT_SUFFIXES = ("_zeroed",)
+_PLACEHOLDER_GATE = "silu"
+_PLACEHOLDER_MLP_IRREPS = "16x0e"
 
 
 class MaceCheckpointConfig(TypedDict):
@@ -92,21 +96,58 @@ def load_native_mace_checkpoint(
     return model.to(device)
 
 
+def persistable_checkpoint_config(
+    config: MaceCheckpointConfig | dict[str, Any],
+) -> dict[str, Any]:
+    """Return JSON-safe constructor metadata for a saved DeePMD model definition."""
+    return deepcopy(dict(config))
+
+
+def validate_mace_state_dict_load(load_result: object) -> None:
+    """Reject missing learned weights while keeping reconstructed derived buffers."""
+    missing_keys = list(getattr(load_result, "missing_keys", []))
+    unexpected_keys = list(getattr(load_result, "unexpected_keys", []))
+    disallowed_missing_keys = [
+        key
+        for key in missing_keys
+        if not key.endswith(ALLOWED_MISSING_STATE_DICT_SUFFIXES)
+    ]
+    if disallowed_missing_keys or unexpected_keys:
+        msg = (
+            "Failed to load MACE checkpoint into DeePMD-GNN wrapper. "
+            f"missing={disallowed_missing_keys}, unexpected={unexpected_keys}"
+        )
+        raise RuntimeError(msg)
+
+
 def _infer_gate(model: ScaleShiftMACE) -> str:
+    """Return a MACE constructor gate; placeholders are fine for unused readouts."""
     if not model.readouts:
         return "None"
     last_readout = model.readouts[-1]
     non_linearity = getattr(last_readout, "non_linearity", None)
+    if non_linearity is None:
+        return _PLACEHOLDER_GATE
     acts = getattr(non_linearity, "acts", None)
-    if acts is None or len(acts) != 1 or not hasattr(acts[0], "f"):
-        msg = "Unsupported MACE nonlinear readout structure"
-        raise ValueError(msg)
-    gate_fn = acts[0].f
+    if acts is None or len(acts) != 1:
+        return _PLACEHOLDER_GATE
+    gate_fn = getattr(acts[0], "f", None)
+    if gate_fn is None:
+        return "None"
     for name, candidate in gate_dict.items():
         if candidate is not None and candidate is gate_fn:
             return name
-    msg = f"Unsupported MACE gate function: {gate_fn}"
-    raise ValueError(msg)
+    return _PLACEHOLDER_GATE
+
+
+def _infer_mlp_irreps(model: ScaleShiftMACE) -> str:
+    """Return readout MLP irreps, or a placeholder when the last readout is linear."""
+    if not model.readouts:
+        return _PLACEHOLDER_MLP_IRREPS
+    mlp_irreps = getattr(model.readouts[-1], "hidden_irreps", None)
+    if mlp_irreps is None:
+        return _PLACEHOLDER_MLP_IRREPS
+    return str(mlp_irreps)
 
 
 def _infer_radial_mlp(model: ScaleShiftMACE) -> list[int]:
@@ -181,11 +222,6 @@ def inspect_native_mace_checkpoint(model: ScaleShiftMACE) -> MaceCheckpointConfi
         msg = f"Unsupported MACE radial basis: {radial_name}"
         raise ValueError(msg)
 
-    last_readout = model.readouts[-1]
-    mlp_irreps = getattr(last_readout, "hidden_irreps", None)
-    if mlp_irreps is None:
-        msg = "Checkpoint does not expose nonlinear readout hidden irreps"
-        raise ValueError(msg)
     scale = model.scale_shift.state_dict()["scale"].detach().cpu()
     if scale.numel() != 1:
         msg = f"Single-head MACE scale must be scalar, got shape {tuple(scale.shape)}"
@@ -227,7 +263,7 @@ def inspect_native_mace_checkpoint(model: ScaleShiftMACE) -> MaceCheckpointConfi
         ),
         "correlation": _infer_correlations(model),
         "gate": _infer_gate(model),
-        "MLP_irreps": str(mlp_irreps),
+        "MLP_irreps": _infer_mlp_irreps(model),
         "radial_type": _RADIAL_BASES[radial_name],
         "radial_MLP": _infer_radial_mlp(model),
         "std": float(scale.item()),
@@ -300,10 +336,13 @@ def build_mace_feature_backbone(
 
 
 __all__ = [
+    "ALLOWED_MISSING_STATE_DICT_SUFFIXES",
     "MaceCheckpointConfig",
     "MaceFeatureBackbone",
     "build_mace_feature_backbone",
     "inspect_native_mace_checkpoint",
     "load_native_mace_checkpoint",
+    "persistable_checkpoint_config",
     "temporary_default_dtype",
+    "validate_mace_state_dict_load",
 ]

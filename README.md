@@ -142,10 +142,13 @@ DeePMD property model. See
 ```
 
 `model_path` uses Python pickle loading, so only load checkpoints from a
-trusted source. The model-level `type_map` must exactly match the checkpoint's
-atomic-number ordering; reordered or subset maps are rejected. `sel` is an
-explicit DeePMD neighbor-list capacity and cannot be inferred from MACE.
-Official single-head MACE-MP-0/MPA-0 89-element checkpoints therefore require:
+trusted source. Neighbor statistics persist the inferred backbone architecture
+into the saved DeePMD checkpoint, so `dp test` and freeze no longer need the
+original `.model` file. The model-level `type_map` must exactly match the
+checkpoint's atomic-number ordering; reordered or subset maps are rejected.
+`sel` is an explicit DeePMD neighbor-list capacity and cannot be inferred from
+MACE. Official single-head MACE-MP-0/MPA-0 89-element checkpoints therefore
+require:
 
 ```text
 ["H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg",
