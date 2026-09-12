@@ -6,7 +6,7 @@ import runpy
 from pathlib import Path
 
 IMPLIB = runpy.run_path(
-    Path(__file__).parents[1] / "third_party" / "implib" / "implib-gen.py",
+    str(Path(__file__).parents[1] / "third_party" / "implib" / "implib-gen.py"),
 )
 
 
