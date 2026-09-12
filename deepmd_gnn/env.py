@@ -1,5 +1,5 @@
-"""Configurations read from environment variables."""
+"""Runtime configuration helpers.
 
-import os
-
-DP_GNN_USE_MAPPING = os.environ.get("DP_GNN_USE_MAPPING", "0") == "1"
+The MACE LAMMPS communication path is model-driven and does not require
+environment-variable switches.
+"""

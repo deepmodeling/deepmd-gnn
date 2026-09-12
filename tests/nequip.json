@@ -1,14 +1,22 @@
 {
   "_comment1": " model parameters",
   "model": {
-    "type": "mace",
+    "type": "nequip",
     "type_map": [
       "O",
       "H"
     ],
     "r_max": 6.0,
     "sel": "auto",
-    "hidden_irreps": "16x0e",
+    "num_layers": 2,
+    "l_max": 1,
+    "num_features": 8,
+    "num_basis": 4,
+    "invariant_layers": 1,
+    "invariant_neurons": 16,
+    "feature_irreps_hidden": "8x0e + 8x1o",
+    "chemical_embedding_irreps_out": "8x0e",
+    "conv_to_output_hidden_irreps_out": "8x0e",
     "_comment2": " that's all"
   },
 

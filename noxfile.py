@@ -2,26 +2,38 @@
 
 from __future__ import annotations
 
+import os
+
 import nox
+
+nox.options.sessions = ["tests"]
+
+UV_OVERRIDES = "requirements-overrides.txt"
+UV_TORCH_BACKEND = os.environ.get("UV_TORCH_BACKEND", "cpu")
+
+
+def install(
+    session: nox.Session,
+    deepmd_requirement: str,
+    *extra_requirements: str,
+) -> None:
+    """Install all dependencies with MACE's e3nn override in one resolution."""
+    session.install(
+        "numpy",
+        deepmd_requirement,
+        *extra_requirements,
+        "-e.[test]",
+        "--overrides",
+        UV_OVERRIDES,
+        "--torch-backend",
+        UV_TORCH_BACKEND,
+    )
 
 
 @nox.session
 def tests(session: nox.Session) -> None:
     """Run test suite with pytest."""
-    session.install(
-        "numpy",
-        "deepmd-kit[torch]>=3.0.0b2",
-        "--extra-index-url",
-        "https://download.pytorch.org/whl/cpu",
-    )
-    cmake_prefix_path = session.run(
-        "python",
-        "-c",
-        "import torch;print(torch.utils.cmake_prefix_path)",
-        silent=True,
-    ).strip()
-    session.log(f"{cmake_prefix_path=}")
-    session.install("-e.[test]", env={"CMAKE_PREFIX_PATH": cmake_prefix_path})
+    install(session, "deepmd-kit[torch]>=3.2.0b0")
     session.run(
         "pytest",
         "--cov",
@@ -31,4 +43,22 @@ def tests(session: nox.Session) -> None:
         "term",
         "--cov-report",
         "xml",
+    )
+
+
+@nox.session
+def lammps(session: nox.Session) -> None:
+    """Run LAMMPS integration tests."""
+    install(
+        session,
+        "deepmd-kit[torch,lmp,cpu]>=3.2.0b0",
+        "mpi4py",
+        "mpich",
+    )
+    session.run(
+        "pytest",
+        "-m",
+        "lammps",
+        "tests/test_lammps.py",
+        env={"DEEPMD_GNN_REQUIRE_LAMMPS": "1"},
     )

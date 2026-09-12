@@ -1,11 +1,35 @@
-file(GLOB OP_SRC edge_index.cc)
+set(OP_SRC edge_index.cc)
+
+if(DEEPMD_GNN_ENABLE_CUDA)
+  list(APPEND OP_SRC edge_index_cuda.cu)
+  if(DEEPMD_GNN_DYNAMIC_CUDART)
+    if(UNIX AND NOT APPLE)
+      add_subdirectory(cudart)
+    else()
+      message(
+        WARNING
+          "DEEPMD_GNN_DYNAMIC_CUDART is only supported on non-Apple UNIX platforms"
+      )
+    endif()
+  endif()
+endif()
 
 add_library(deepmd_gnn MODULE ${OP_SRC})
-# link: libdeepmd libtorch
-target_link_libraries(deepmd_gnn PRIVATE ${TORCH_LIBRARIES})
-target_compile_definitions(
-  deepmd_gnn
-  PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:_GLIBCXX_USE_CXX11_ABI=${OP_CXX_ABI_PT}>")
+target_include_directories(deepmd_gnn PRIVATE ${TORCH_INCLUDE_DIRS})
+if(TORCH_CXX_FLAGS)
+  separate_arguments(DEEPMD_GNN_TORCH_CXX_FLAGS NATIVE_COMMAND
+                     "${TORCH_CXX_FLAGS}")
+  target_compile_options(deepmd_gnn PRIVATE ${DEEPMD_GNN_TORCH_CXX_FLAGS})
+endif()
+if(DEEPMD_GNN_ENABLE_CUDA)
+  target_compile_definitions(deepmd_gnn PRIVATE DEEPMD_GNN_WITH_CUDA)
+  set_target_properties(deepmd_gnn PROPERTIES CUDA_STANDARD 17)
+  if(TARGET deepmd_gnn_cudart)
+    set_target_properties(deepmd_gnn PROPERTIES CUDA_RUNTIME_LIBRARY None)
+    target_link_libraries(deepmd_gnn PRIVATE deepmd_gnn_cudart ${CMAKE_DL_LIBS})
+  endif()
+endif()
+target_link_libraries(deepmd_gnn PRIVATE ${DEEPMD_GNN_TORCH_LIBRARIES})
 if(APPLE)
   set_target_properties(deepmd_gnn PROPERTIES INSTALL_RPATH "@loader_path")
 else()

@@ -8,6 +8,7 @@ Table of contents
 
    Overview <index>
    parameters
+   development
    Python API <autoapi/deepmd-gnn/index>
 
 Indices and tables

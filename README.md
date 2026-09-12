@@ -12,8 +12,37 @@ Supported packages and models include:
 - [MACE](https://github.com/ACEsuit/mace) (PyTorch version)
 - [NequIP](https://github.com/mir-group/nequip) (PyTorch version)
 
-After [installing the plugin](#installation), you can train the GNN models using DeePMD-kit, run active learning cycles for the GNN models using [DP-GEN](https://github.com/deepmodeling/dpgen), perform simulations with the MACE model using molecular dynamic packages supported by DeePMD-kit, such as [LAMMPS](https://github.com/lammps/lammps) and [AMBER](https://ambermd.org/).
+After [installing the plugin](#installation), you can train the GNN models using DeePMD-kit, run active learning cycles for the GNN models using [DP-GEN](https://github.com/deepmodeling/dpgen), and perform simulations with MACE and NequIP models using molecular dynamic packages supported by DeePMD-kit, such as [LAMMPS](https://github.com/lammps/lammps) and [AMBER](https://ambermd.org/).
 You can follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/) to train the GNN models using its PyTorch backend, after using the specific [model parameters](#parameters).
+
+## Highlights
+
+The official MACE and NequIP packages remain the reference implementations of
+their model architectures. DeePMD-GNN focuses on what is useful beyond the
+standalone official workflows: bringing those equivariant GNN models into the
+DeePMD-kit ecosystem for training, active learning, and production molecular
+simulations.
+
+- **Unified DeePMD-kit workflow**: train and freeze MACE or NequIP models with
+  `dp --pt train` and `dp --pt freeze`, using DeePMD-kit data pipelines,
+  inputs, losses, and model serialization instead of maintaining a separate
+  workflow for each upstream package.
+- **Broader MD engine access**: run frozen GNN models through molecular dynamics
+  interfaces supported by DeePMD-kit, including LAMMPS and AMBER, rather than
+  relying only on the engines and plugins maintained by the official MACE or
+  NequIP projects.
+- **Parallel periodic simulations**: use DeePMD-kit's message-passing
+  communication path for LAMMPS/MPI runs. MACE and NequIP models advertise
+  their message passing to DeePMD-kit, so ghost-atom features can be exchanged
+  between message-passing layers through `border_op`.
+- **Active learning and QM/MM integration**: plug MACE or NequIP models into
+  DP-GEN active learning loops and DeePMD-kit DPRc/AmberTools workflows through
+  the same interface used by other DeePMD-kit models.
+- **Deployment-oriented MACE extras**: export MACE models with the
+  DeePMD-kit/LAMMPS PyTorch exportable backend (`pt_expt`), train with optional
+  cuEquivariance acceleration, use DeePMD-kit's `torch.compile` path, and
+  conservatively convert selected official MACE-OFF checkpoints for downstream
+  validation in DeePMD-kit-supported engines.
 
 ## Credits
 
@@ -43,16 +72,14 @@ cd deepmd-gnn
 
 #### Python interface plugin
 
-Python 3.9 or above is required. A C++ compiler that supports C++ 14 (for PyTorch 2.0) or C++ 17 (for PyTorch 2.1 or above) is required.
-
-Assume you have installed [DeePMD-kit](https://github.com/deepmodeling/deepmd-kit) (v3.0.0b2 or above) and [PyTorch](https://github.com/pytorch/pytorch) in an environment, then execute
+Python 3.10 or above is required. A C++ compiler that supports C++ 17 is required.
+NVCC is required to build CUDA OPs.
 
 ```sh
-# expose PyTorch CMake modules
-export CMAKE_PREFIX_PATH=$(python -c "import torch;print(torch.utils.cmake_prefix_path)")
-
 pip install .
 ```
+
+Only PyTorch 2.10 or above is supported.
 
 #### C++ interface plugin
 
@@ -89,33 +116,136 @@ dp --pt freeze
 A frozen model file named `frozen_model.pth` will be generated. You can use it in the MD packages or other interfaces.
 For details, follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/).
 
-### Running LAMMPS + MACE with period boundary conditions
+### Exporting MACE models with the PyTorch exportable backend
+
+MACE models can also be trained and frozen with DeePMD-kit's PyTorch exportable
+backend (`pt_expt`):
+
+```sh
+dp --pt-expt train input.json
+dp --pt-expt freeze -o frozen_model.pt2
+```
+
+Use this path when you need a `.pt2` model for the DeePMD-kit/LAMMPS
+PyTorch exportable runtime. The `pt_expt` path currently supports MACE models;
+NequIP models should still use the regular `--pt` workflow.
+
+The `pt_expt` workflow requires DeePMD-kit 3.2.0 or later. Multi-layer MACE
+models include the extra communication artifact needed by LAMMPS/MPI inside the
+exported `.pt2` package, so the resulting file can be passed to LAMMPS in the
+same way as other DeePMD-kit frozen models.
+
+#### Training MACE with cuEquivariance
+
+MACE training can use cuEquivariance kernels when the installed MACE package
+provides `CuEquivarianceConfig` and the cuEquivariance runtime packages are
+available. Install the matching extra for the CUDA runtime used by PyTorch:
+
+```sh
+pip install "deepmd-gnn[cueq]"
+```
+
+The `cueq` extra installs the CUDA 12 cuEquivariance op package. For CUDA 11
+environments, use `deepmd-gnn[cueq-cu11]` instead. When installing from a
+source checkout, use `pip install ".[cueq]"` or `pip install ".[cueq-cu11]"`.
+
+Then enable it in the `model` section:
+
+```json
+"model": {
+  "type": "mace",
+  "enable_cueq": true
+}
+```
+
+Then train with either PyTorch backend:
+
+```sh
+dp --pt train input.json
+dp --pt-expt train input.json
+```
+
+On a single RTX 5090, using the water example data with `sel = "auto"`,
+`hidden_irreps = "128x0e + 128x1o"`, `batch_size = 1`, and
+`disp_freq = 100`, 2000-step runs were used to sample steady-state training
+speed:
+
+| backend        | cuEquivariance | steady avg after step 300 | speedup |
+| -------------- | -------------: | ------------------------: | ------: |
+| `dp --pt`      |             no |             0.1955 s/step |   1.00x |
+| `dp --pt`      |            yes |             0.1061 s/step |   1.84x |
+| `dp --pt-expt` |             no |             0.2025 s/step |   1.00x |
+| `dp --pt-expt` |            yes |             0.1007 s/step |   2.01x |
+
+The cuEquivariance effect is similar in both backends, but not bit-for-bit
+identical: in this run, the steady cuEquivariance speed differed by about 5%.
+The first cuEquivariance step includes a one-time kernel initialization cost
+(about 56 s in this run), which is amortized over long training jobs.
+
+cuEquivariance accelerates training only. When freezing a checkpoint whose
+input had `"enable_cueq": true`, deepmd-gnn disables cuEquivariance for the
+frozen model and converts the MACE weights back to the e3nn format. This lets
+both `dp --pt freeze` and `dp --pt-expt freeze` export normally, but the frozen
+model does not use cuEquivariance kernels.
+
+#### Training MACE with `torch.compile`
+
+MACE training through the `pt_expt` backend can use DeePMD-kit's native
+`torch.compile` path. Enable it in the `training` section:
+
+```json
+"training": {
+  "enable_compile": true
+}
+```
+
+Then run the regular exportable-backend training command:
+
+```sh
+dp --pt-expt train input.json
+```
+
+On a single RTX 5090, using the water example data with `sel = "auto"`,
+`hidden_irreps = "128x0e + 128x1o"`, `batch_size = 1`, and
+`disp_freq = 100`, a 2000-step run was used to sample the steady-state training
+speed:
+
+| mode            | steady avg after step 200 | speedup |
+| --------------- | ------------------------: | ------: |
+| eager `pt_expt` |             0.2030 s/step |   1.00x |
+| `torch.compile` |             0.1495 s/step |   1.36x |
+
+The first compiled step includes a one-time Inductor trace/compile cost
+(97.17 s in this run), which is amortized over normal long training jobs.
+
+Do not enable `enable_cueq` and `enable_compile` together for now. With
+cuEquivariance enabled, DeePMD-kit's symbolic `make_fx` compile trace fails in
+the cuEquivariance `uniform_1d` fake-tensor path with a data-dependent symbolic
+shape guard.
+
+### Running LAMMPS + GNN models with period boundary conditions
 
 GNN models use message passing neural networks,
 so the neighbor list built with traditional cutoff radius will not work,
 since the ghost atoms also need to build neighbor list.
-By default, the model requests the neighbor list with a cutoff radius of $r_c \times N_{L}$,
-where $r_c$ is set by `r_max` and $N_L$ is set by `num_interactions` (MACE) / `num_layers` (NequIP),
-and rebuilds the neighbor list for ghost atoms.
-However, this approach is very inefficient.
+The MACE and NequIP models work like regular DeePMD-kit message-passing models.
+No extra environment variable is needed when freezing the model.
+They advertise message passing to DeePMD-kit, so LAMMPS can use the regular
+neighbor list with a cutoff radius of $r_c$ and DeePMD-kit communicates
+the ghost-atom features through MPI between message-passing layers.
+This requires a DeePMD-kit build whose LAMMPS/PyTorch interface provides
+the message-passing communication op, `border_op`.
 
-The alternative approach for the MACE model (note: NequIP doesn't support such approach) is to use the mapping passed from LAMMPS, which does not support MPI.
-One needs to set `DP_GNN_USE_MAPPING` when freezing the models,
-
-```sh
-DP_GNN_USE_MAPPING=1 dp --pt freeze
-```
-
-and request the mapping when using LAMMPS (also requires DeePMD-kit v3.0.0rc0 or above).
-By using the mapping, the ghost atoms will be mapped to the real atoms,
-so the regular neighbor list with a cutoff radius of $r_c$ can be used.
+When `border_op` communication is available, DeePMD-kit/LAMMPS uses that
+MPI-capable path. The atom-map path is a serial fallback for runs that do not
+receive a DeePMD message-passing `comm_dict`; it maps ghost atoms to their
+corresponding real atoms on the same process and is not a substitute for MPI
+communication. Request the mapping when using this fallback in LAMMPS
+(also requires DeePMD-kit v3.0.0rc0 or above).
 
 ```lammps
 atom_modify map array
 ```
-
-In the future, we will explore utilizing the MPI to communicate the neighbor list,
-while this approach requires a deep hack for external packages.
 
 ## Parameters
 
@@ -147,7 +277,8 @@ Below is default values for the MACE model, most of which follows default values
   "radial_type": "bessel",
   "radial_MLP": [64, 64, 64],
   "std": 1.0,
-  "precision": "float32"
+  "precision": "float32",
+  "enable_cueq": false
 }
 ```
 
@@ -187,6 +318,40 @@ In `deepmd-gnn`, the GNN model can be used in a [DPRc](https://docs.deepmodeling
 Type maps that starts with `m` (such as `mH`) or `OW` or `HW` will be recognized as MM types.
 Two MM atoms will not build edges with each other.
 Such GNN+DPRc model can be directly used in AmberTools24.
+
+## Conservative MACE-OFF checkpoint loading
+
+`deepmd_gnn.mace_off` provides a conservative bridge from selected official
+MACE-OFF checkpoints into DeePMD-GNN. The goal is to recover the parts that are
+really stored in the checkpoint while avoiding guesses about wrapper-only
+runtime semantics.
+
+In practice, this path intentionally does less inference than the broader
+DPRc/QM/MM machinery:
+
+- it infers ordinary element `type_map` entries from checkpoint
+  `atomic_numbers`
+- it restores checkpoint-side model semantics such as `avg_num_neighbors` from
+  the original `ScaleShiftMACE` object instead of reusing DeePMD's runtime
+  neighbor cap
+- it requires an explicit `sel` value, because `sel` is a DeePMD runtime
+  neighbor-list cap and is not stored in the MACE-OFF checkpoint
+- it does **not** infer DPRc/MM labels such as `mH`, `mC`, `HW`, or `OW`
+- `load_mace_off_model()` keeps the original eager MACE checkpoint model inside
+  the wrapper for closer native/wrapper parity, while
+  `convert_mace_off_to_deepmd()` scripts the model only at export time
+- it uses `torch.load(..., weights_only=False)` to recover the original
+  `ScaleShiftMACE` object, so callers should only use trusted checkpoints
+
+Example:
+
+```sh
+deepmd-gnn mace-off convert mace_off23_small_dp.pt --model off23_small --sel 64
+```
+
+This produces a scripted DeePMD-GNN wrapper. That serialization step is useful,
+but it is still a good idea to validate the final downstream workflow you care
+about (for example in LAMMPS or AMBER).
 
 ## Examples
 

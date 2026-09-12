@@ -2,8 +2,9 @@
 """Test models."""
 
 import unittest
+from collections.abc import Callable
 from copy import deepcopy
-from typing import Any, Callable, ClassVar, Optional
+from typing import Any, ClassVar
 
 import deepmd.pt.model  # noqa: F401
 import numpy as np
@@ -151,17 +152,19 @@ class ModelTestCase:
     """Class wrapper for forward method."""
     forward_wrapper_cpu_ref: Callable[[Any], Any]
     """Convert model to CPU method."""
-    aprec_dict: dict[str, Optional[float]]
+    aprec_dict: dict[str, float | None]
     """Dictionary of absolute precision in each test."""
-    rprec_dict: dict[str, Optional[float]]
+    rprec_dict: dict[str, float | None]
     """Dictionary of relative precision in each test."""
-    epsilon_dict: dict[str, Optional[float]]
+    epsilon_dict: dict[str, float | None]
     """Dictionary of epsilons in each test."""
 
     skipTest: Callable[[str], None]  # noqa: N815
     """Skip test method."""
     output_def: dict[str, Any]
     """Output definition."""
+    supports_atomic_virial: bool = False
+    """Whether the model provides atomic virials suitable for finite-difference tests."""
 
     def test_get_type_map(self) -> None:
         """Test get_type_map."""
@@ -219,11 +222,8 @@ class ModelTestCase:
         test_spin = getattr(self, "test_spin", False)
         nf = 2
         natoms = 5
-        aprec = (
-            0
-            if self.aprec_dict.get("test_forward", None) is None
-            else self.aprec_dict["test_forward"]
-        )
+        aprec_value = self.aprec_dict.get("test_forward")
+        aprec = 0.0 if aprec_value is None else aprec_value
         rng = np.random.default_rng(GLOBAL_SEED)
         coord = 4.0 * rng.random([1, natoms, 3]).repeat(nf, 0).reshape([nf, -1])
         atype = np.array([[0, 0, 0, 1, 1] * nf], dtype=int).reshape([nf, -1])
@@ -268,7 +268,11 @@ class ModelTestCase:
             fparam = rng.random([nf, self.module.get_dim_fparam()])
         ret = []
         ret_lower = []
+        do_atomic_virial = (
+            self.supports_atomic_virial and "atom_virial" in self.output_def
+        )
         for _module in self.modules_to_test:
+            has_message_passing = _module.has_message_passing()
             module = self.forward_wrapper(_module)
             input_dict = {
                 "coord": coord,
@@ -277,6 +281,8 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
+            if do_atomic_virial:
+                input_dict["do_atomic_virial"] = True
             if test_spin:
                 input_dict["spin"] = spin
             ret.append(module(**input_dict))
@@ -289,6 +295,8 @@ class ModelTestCase:
                 "fparam": fparam,
                 "mapping": mapping_large,
             }
+            if do_atomic_virial:
+                input_dict_lower["do_atomic_virial"] = True
             if test_spin:
                 input_dict_lower["extended_spin"] = spin_ext
 
@@ -296,19 +304,22 @@ class ModelTestCase:
             rng.shuffle(input_dict_lower["nlist"], axis=-1)
             ret_lower.append(module.forward_lower(**input_dict_lower))
 
-            input_dict_lower = {
-                "extended_coord": coord_ext_large,
-                "extended_atype": atype_ext_large,
-                "nlist": nlist_large,
-                "aparam": aparam,
-                "fparam": fparam,
-            }
-            if test_spin:
-                input_dict_lower["extended_spin"] = spin_ext
+            if not has_message_passing:
+                input_dict_lower = {
+                    "extended_coord": coord_ext_large,
+                    "extended_atype": atype_ext_large,
+                    "nlist": nlist_large,
+                    "aparam": aparam,
+                    "fparam": fparam,
+                }
+                if do_atomic_virial:
+                    input_dict_lower["do_atomic_virial"] = True
+                if test_spin:
+                    input_dict_lower["extended_spin"] = spin_ext
 
-            # use shuffled nlist, simulating the lammps interface
-            rng.shuffle(input_dict_lower["nlist"], axis=-1)
-            ret_lower.append(module.forward_lower(**input_dict_lower))
+                # use shuffled nlist, simulating the lammps interface
+                rng.shuffle(input_dict_lower["nlist"], axis=-1)
+                ret_lower.append(module.forward_lower(**input_dict_lower))
 
         for kk in ret[0]:
             # ensure the first frame and the second frame are the same
@@ -372,6 +383,21 @@ class ModelTestCase:
             else:
                 continue
             np.testing.assert_allclose(rr1, rr2, atol=aprec)
+        if do_atomic_virial:
+            for rr in ret:
+                np.testing.assert_allclose(
+                    rr["atom_virial"].sum(axis=1).reshape(rr["virial"].shape),
+                    rr["virial"],
+                    atol=max(aprec, 1e-5),
+                    err_msg="compare atom_virial sum and virial",
+                )
+            for rr in ret_lower:
+                np.testing.assert_allclose(
+                    rr["extended_virial"].sum(axis=1).reshape(rr["virial"].shape),
+                    rr["virial"],
+                    atol=max(aprec, 1e-5),
+                    err_msg="compare extended_virial sum and virial",
+                )
 
     def test_permutation(self) -> None:
         """Test permutation."""
@@ -953,6 +979,16 @@ class ModelTestCase:
                 }
                 return module(**input_dict)["energy"]
 
+            def ff_cell_atom(bb):
+                input_dict = {
+                    "coord": stretch_box(coord, cell, bb),
+                    "atype": atype,
+                    "box": bb,
+                    "aparam": aparam,
+                    "fparam": fparam,
+                }
+                return module(**input_dict)["atom_energy"]
+
             fdv = (
                 -(
                     finite_difference(ff_cell, cell, delta=delta)
@@ -970,12 +1006,35 @@ class ModelTestCase:
                 "aparam": aparam,
                 "fparam": fparam,
             }
-            rfv = module(**input_dict)["virial"]
+            do_atomic_virial = (
+                self.supports_atomic_virial and "atom_virial" in self.output_def
+            )
+            if do_atomic_virial:
+                input_dict["do_atomic_virial"] = True
+            ret = module(**input_dict)
+            rfv = ret["virial"]
             np.testing.assert_almost_equal(
                 fdv.reshape(-1, 9),
                 rfv.reshape(-1, 9),
                 decimal=places,
             )
+            if do_atomic_virial:
+                fdav = -(
+                    finite_difference(ff_cell_atom, cell, delta=delta)
+                    .reshape(-1, 3, 3)
+                    .transpose(0, 2, 1)
+                    @ cell.reshape(-1, 3, 3)
+                ).reshape(-1, 9)
+                np.testing.assert_almost_equal(
+                    fdav,
+                    ret["atom_virial"].reshape(-1, 9),
+                    decimal=places,
+                )
+                np.testing.assert_almost_equal(
+                    ret["atom_virial"].sum(axis=1).reshape(-1, 9),
+                    rfv.reshape(-1, 9),
+                    decimal=places,
+                )
         else:
             # not support virial by far
             pass
@@ -1078,11 +1137,12 @@ class TestMaceModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: igno
         with torch.jit.optimized_execution(should_optimize=False):
             cls._script_module = torch.jit.script(cls.module)
         cls.output_def = cls.module.translated_output_def()
-        cls.expected_has_message_passing = False
+        cls.expected_has_message_passing = True
         cls.expected_sel_type = []
         cls.expected_dim_fparam = 0
         cls.expected_dim_aparam = 0
-        cls.expected_nmpnn = 2
+        cls.expected_nmpnn = 1
+        cls.supports_atomic_virial = True
 
 
 class TestNequipModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: ignore[misc]
@@ -1120,8 +1180,9 @@ class TestNequipModel(unittest.TestCase, EnerModelTest, PTTestCase):  # type: ig
         with torch.jit.optimized_execution(should_optimize=False):
             cls._script_module = torch.jit.script(cls.module)
         cls.output_def = cls.module.translated_output_def()
-        cls.expected_has_message_passing = False
+        cls.expected_has_message_passing = True
         cls.expected_sel_type = []
         cls.expected_dim_fparam = 0
         cls.expected_dim_aparam = 0
-        cls.expected_nmpnn = 2
+        cls.expected_nmpnn = 1
+        cls.supports_atomic_virial = True

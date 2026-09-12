@@ -1,0 +1,102 @@
+name: Test CUDA
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types:
+      - labeled
+      - opened
+      - reopened
+      - synchronize
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_SYSTEM_PYTHON: 1
+
+jobs:
+  test_cuda:
+    name: Test Python package on CUDA
+    runs-on: gpu
+    env:
+      # PyTorch 2.11 cu128/cu129 wheels do not include kernels for the V100 runners (CC 7.0).
+      UV_TORCH_BACKEND: cu126
+      CMAKE_ARGS: -DDEEPMD_GNN_WITH_CUDA=ON
+      # V100/Triton fails pt_expt AOTI packaging; CPU CI still covers pt_expt freeze.
+      DEEPMD_GNN_SKIP_CUDA_PT_EXPT_AOTI: "1"
+    if: >-
+      github.repository_owner == 'deepmodeling' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'merge_group' ||
+        github.event_name == 'pull_request' && github.event.label && github.event.label.name == 'Test CUDA'
+      )
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/requirements*.txt
+            **/pyproject.toml
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential wget
+          if ! command -v nvcc; then
+            UBUNTU_VERSION=$(lsb_release -rs | tr -d '.')
+            OS_NAME="ubuntu${UBUNTU_VERSION}"
+            wget https://developer.download.nvidia.com/compute/cuda/repos/${OS_NAME}/x86_64/cuda-keyring_1.1-1_all.deb
+            sudo dpkg -i cuda-keyring_1.1-1_all.deb
+            sudo apt-get update
+            sudo apt-get -y install cuda-toolkit-12-6
+            echo "CUDA_PATH=/usr/local/cuda-12.6" >> "$GITHUB_ENV"
+            echo "/usr/local/cuda-12.6/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Install dependencies
+        run: uv pip install nox[uv]
+      - name: Test Python package on CUDA
+        run: nox -db uv -s tests
+        env:
+          CUDA_VISIBLE_DEVICES: 0
+      - name: Check CUDA availability
+        run: |
+          .nox/tests/bin/python - <<'PY'
+          import torch
+          print(f"torch: {torch.__version__}")
+          print(f"cuda available: {torch.cuda.is_available()}")
+          if not torch.cuda.is_available():
+              raise SystemExit("CUDA is unavailable in the nox test environment")
+          print(f"cuda device: {torch.cuda.get_device_name(0)}")
+          PY
+        env:
+          CUDA_VISIBLE_DEVICES: 0
+      - name: Test LAMMPS on CUDA
+        run: nox -db uv -s lammps
+        env:
+          CUDA_VISIBLE_DEVICES: 0
+
+  pass:
+    name: Pass testing on CUDA
+    needs: [test_cuda]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
+          allowed-skips: test_cuda

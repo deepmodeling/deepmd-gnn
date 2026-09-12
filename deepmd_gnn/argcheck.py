@@ -29,6 +29,7 @@ def mace_model_args() -> Argument:
     doc_radial_mlp = "width of the radial MLP"
     doc_std = "Standard deviation of force components in the training set"
     doc_precision = "Precision of the model, float32 or float64"
+    doc_enable_cueq = "Enable cuEquivariance acceleration for MACE training"
     return Argument(
         "mace",
         dict,
@@ -115,6 +116,13 @@ def mace_model_args() -> Argument:
                 optional=True,
                 default="float32",
                 doc=doc_precision,
+            ),
+            Argument(
+                "enable_cueq",
+                bool,
+                optional=True,
+                default=False,
+                doc=doc_enable_cueq,
             ),
         ],
         doc="MACE model",
