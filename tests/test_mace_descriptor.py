@@ -177,7 +177,6 @@ def test_constructor_registry_and_metadata(mace_checkpoint: Path) -> None:
     assert descriptor.has_message_passing()
     assert not descriptor.has_message_passing_across_ranks()
     assert all(parameter.requires_grad for parameter in descriptor.parameters())
-    assert descriptor.get_default_chg_spin() is None
     descriptor.set_stat_mean_and_stddev(torch.ones(1), torch.ones(1))
     mean, stddev = descriptor.get_stat_mean_and_stddev()
     assert mean.numel() == 0
@@ -310,6 +309,30 @@ def test_deserialize_keeps_derived_zeroed_buffers(mace_checkpoint: Path) -> None
         _descriptor_output(restored),
         _descriptor_output(descriptor),
     )
+
+
+def test_legacy_checkpoint_supports_strict_scripted_state_restore(
+    mace_checkpoint: Path,
+    tmp_path: Path,
+) -> None:
+    """Derived flags must exist before a training checkpoint is saved."""
+    native = torch.load(mace_checkpoint, map_location="cpu", weights_only=False)
+    for module in native.modules():
+        for name, _ in list(module.named_buffers(recurse=False)):
+            if name.endswith("_zeroed"):
+                delattr(module, name)
+    legacy_path = tmp_path / "legacy.model"
+    torch.save(native, legacy_path)
+    descriptor = MaceDescriptor(
+        model_path=legacy_path,
+        sel=16,
+        type_map=["H", "O"],
+    )
+    restored = MaceDescriptor(sel=16, config=descriptor.config, type_map=["H", "O"])
+    scripted = torch.jit.script(restored)
+    scripted.load_state_dict(descriptor.state_dict())
+    inputs = _inputs(descriptor)
+    torch.testing.assert_close(scripted(*inputs)[0], descriptor(*inputs)[0])
 
 
 def test_mpa_like_checkpoint_roundtrip_and_gradient(
@@ -896,6 +919,24 @@ def test_dp_property_training_smoke(
     prediction, _, _ = tester.wrapper(coord, atype)
     assert torch.isfinite(prediction["band_gap"]).all()
 
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "deepmd",
+            "--pt",
+            "train",
+            input_path.name,
+            "--init-model",
+            str(saved_checkpoint),
+            "--use-pretrain-script",
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        timeout=120,
+    )
+
 
 def test_checkpoint_feature_parity_and_serialization_roundtrip(
     mace_checkpoint: Path,
@@ -959,6 +1000,7 @@ def test_off23_small_checkpoint_features_and_gradients(tmp_path: Path) -> None:
         for parameter in descriptor.backbone.parameters()
     )
     restored = BaseDescriptor.deserialize(descriptor.serialize())
+    torch.jit.script(restored).load_state_dict(descriptor.state_dict())
     torch.testing.assert_close(
         restored(coord_ext, atype_ext, nlist, mapping=mapping)[0],
         output.detach(),

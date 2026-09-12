@@ -92,6 +92,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         self.type_map = list(type_map)
         self.ntypes = len(self.type_map)
         self.trainable = bool(trainable)
+        self.model_path: str | None = None
         source_path = None if model_path is None else Path(model_path)
         if source_path is not None and source_path.is_file():
             model = load_native_mace_checkpoint(
@@ -436,7 +437,11 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             msg = "MACE descriptor requires an explicit positive integer sel"
             raise ValueError(msg)
         model_path = local_jdata.get("model_path")
-        if model_path:
+        # Initialization from a trained checkpoint repeats neighbor selection
+        # with its saved definition, after the native pickle may have moved.
+        if model_path and (
+            local_jdata.get("config") is None or Path(model_path).is_file()
+        ):
             model = load_native_mace_checkpoint(Path(model_path), device="cpu")
             inferred = persistable_checkpoint_config(
                 inspect_native_mace_checkpoint(model),

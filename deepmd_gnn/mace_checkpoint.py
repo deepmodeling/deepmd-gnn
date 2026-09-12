@@ -284,6 +284,22 @@ class MaceFeatureBackbone(torch.nn.Module):
         self.radial_embedding = model.radial_embedding
         self.interactions = model.interactions
         self.products = model.products
+        # Older native pickles predate MACE's zero-path flags. Derive exactly
+        # the same flags from their existing CG tensors before training saves
+        # state: Tester scripts a reconstructed model before a strict load, so
+        # deserialize()'s missing-buffer allowance cannot repair that workflow.
+        for product in self.products:
+            for contraction in product.symmetric_contractions.contractions:
+                correlation = int(contraction.correlation)
+                for order in range(1, correlation + 1):
+                    name = (
+                        "weights_max_zeroed"
+                        if order == correlation
+                        else f"weights_{order - 1}_zeroed"
+                    )
+                    if not hasattr(contraction, name):
+                        matrix = getattr(contraction, f"U_matrix_{order}")
+                        contraction.register_buffer(name, torch.all(matrix == 0))
         self.register_buffer("atomic_numbers", model.atomic_numbers.detach().clone())
 
 
