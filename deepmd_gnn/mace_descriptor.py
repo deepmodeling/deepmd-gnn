@@ -150,6 +150,10 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         for parameter in self.backbone.parameters():
             parameter.requires_grad_(self.trainable)
 
+    def has_default_chg_spin(self) -> bool:
+        """Declare absent charge/spin defaults for newer DeePMD model exports."""
+        return False
+
     def get_default_chg_spin(self) -> None:
         """Return no charge/spin defaults with a concrete TorchScript type."""
         return None  # noqa: RET501
