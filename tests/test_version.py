@@ -7,6 +7,7 @@ import subprocess
 import sys
 from importlib.metadata import version
 
+import pytest
 import torch
 
 from deepmd_gnn import __version__
@@ -18,7 +19,16 @@ def test_version() -> None:
     assert version("deepmd-gnn") == __version__
 
 
-def test_import_does_not_disable_weights_only_loading() -> None:
+@pytest.mark.parametrize(
+    "module",
+    [
+        "deepmd_gnn.mace",
+        "deepmd_gnn.nequip",
+        "deepmd.pt",
+        "deepmd.pt_expt",
+    ],
+)
+def test_import_does_not_disable_weights_only_loading(module: str) -> None:
     """Importing the plugin must not change process-wide torch.load policy."""
     env = os.environ.copy()
     env.pop("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", None)
@@ -27,8 +37,7 @@ def test_import_does_not_disable_weights_only_loading() -> None:
             sys.executable,
             "-c",
             (
-                "import os; import deepmd_gnn; import deepmd_gnn.mace; "
-                "import deepmd_gnn.nequip; "
+                f"import os; import {module}; "
                 "assert 'TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD' not in os.environ"
             ),
         ],
