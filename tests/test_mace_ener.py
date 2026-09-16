@@ -3,10 +3,15 @@
 
 from __future__ import annotations
 
+import sys
+import types
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from deepmd.pt.model.atomic_model.energy_atomic_model import DPEnergyAtomicModel
 from deepmd.pt.model.model import get_model
 from deepmd.pt.train.training import get_model_for_wrapper
 from deepmd.pt.train.wrapper import ModelWrapper
@@ -14,10 +19,13 @@ from deepmd.pt.utils import env
 from deepmd.pt.utils.multi_task import preprocess_shared_params
 
 import deepmd_gnn.pt  # noqa: F401
+import deepmd_gnn.pt as pt_mod
 from deepmd_gnn.mace import MaceModel
 from deepmd_gnn.mace_checkpoint import (
     MaceEnergyHead,
+    ZeroPairRepulsion,
     load_native_mace_checkpoint,
+    product_layer_feature_dims,
 )
 from deepmd_gnn.mace_descriptor import MaceDescriptor
 from deepmd_gnn.mace_ener import MaceEnergyFitting, split_packed_layer_features
@@ -516,3 +524,186 @@ def test_set_by_statistic_replaces_e0_not_out_bias(mace_checkpoint: Path) -> Non
         model.get_fitting_net().head.atomic_energies_fn.atomic_energies,
         e0_before,
     )
+
+
+def test_mace_ener_rejects_invalid_construction(mace_checkpoint: Path) -> None:
+    """Constructor guards keep the original head aligned with the descriptor."""
+    with pytest.raises(ValueError, match="type_map"):
+        MaceEnergyFitting(ntypes=2, dim_descrpt=2)
+    with pytest.raises(ValueError, match="ntypes"):
+        MaceEnergyFitting(ntypes=1, dim_descrpt=2, type_map=["H", "O"])
+    with pytest.raises(ValueError, match="mixed_types"):
+        MaceEnergyFitting(
+            ntypes=2,
+            dim_descrpt=2,
+            type_map=["H", "O"],
+            mixed_types=False,
+        )
+    with pytest.raises(ValueError, match="atomic-number"):
+        MaceEnergyFitting(
+            ntypes=2,
+            dim_descrpt=2,
+            type_map=["O", "H"],
+            model_path=mace_checkpoint,
+        )
+    with pytest.raises(FileNotFoundError, match="not found"):
+        MaceEnergyFitting(
+            ntypes=2,
+            dim_descrpt=2,
+            type_map=["H", "O"],
+            model_path="/no/such/mace.model",
+        )
+    with pytest.raises(ValueError, match="Exactly one"):
+        MaceEnergyFitting(ntypes=2, dim_descrpt=2, type_map=["H", "O"])
+    filled: dict = {}
+    fitting = MaceEnergyFitting(
+        ntypes=2,
+        dim_descrpt=2,
+        type_map=["H", "O"],
+        model_path=mace_checkpoint,
+        config=filled,
+        trainable=False,
+    )
+    assert filled["num_interactions"] == 2
+    assert fitting.get_type_map() == ["H", "O"]
+    assert fitting.get_dim_fparam() == 0
+    assert fitting.has_default_fparam() is False
+    assert fitting.get_default_fparam() is None
+    assert fitting.get_dim_aparam() == 0
+    assert fitting.get_sel_type() == []
+    fitting.set_case_embd(0)
+    fitting.compute_input_stats([])
+    fitting.compute_output_stats([])
+    with pytest.raises(NotImplementedError, match="type_map"):
+        fitting.change_type_map(["H"])
+    with pytest.raises(ValueError, match="g2"):
+        fitting.forward(torch.zeros(1, 1, 2), torch.zeros(1, 1, dtype=torch.int64))
+    with pytest.raises(ValueError, match="width"):
+        split_packed_layer_features(torch.zeros(1, 1, 3), [1, 1])
+    with pytest.raises(ValueError, match="type_map mismatch"):
+        MaceEnergyFitting(
+            ntypes=2,
+            dim_descrpt=2,
+            type_map=["H", "O"],
+            config={**fitting.config, "type_map": ["O", "H"]},
+        )
+    with pytest.raises(ValueError, match="serialized"):
+        MaceEnergyFitting.deserialize({"@class": "Nope", "type": "mace_ener"})
+    with pytest.raises(ValueError, match="serialized"):
+        MaceEnergyFitting.deserialize({"@class": "Fitting", "type": "ener"})
+    serialized = fitting.serialize()
+    energy_key = "atomic_energies_fn.atomic_energies"
+    serialized["@variables"][energy_key] = serialized["@variables"][energy_key].reshape(
+        -1,
+    )
+    restored = MaceEnergyFitting.deserialize(serialized)
+    assert restored.head.atomic_energies_fn.atomic_energies.numel() == 2
+    with pytest.raises(ValueError, match="no product"):
+        product_layer_feature_dims(SimpleNamespace(products=None))
+    with pytest.raises(ValueError, match="no product"):
+        product_layer_feature_dims(SimpleNamespace(products=[]))
+    with pytest.raises(ValueError, match="does not expose"):
+        product_layer_feature_dims(
+            SimpleNamespace(products=[SimpleNamespace(linear=None)]),
+        )
+
+
+def test_plugin_patches_cover_non_mace_and_hessian(mace_checkpoint: Path) -> None:
+    """Plugin wrappers keep vanilla EnergyModel paths and optional hessian."""
+    pt_mod.load()
+    install_atomic = "_install_mace_ener_energy_atomic_model"
+    install_standard = "_install_mace_ener_standard_model"
+    getattr(pt_mod, install_atomic)()
+    getattr(pt_mod, install_standard)()
+    property_model = get_model(
+        {
+            "type": "standard",
+            "type_map": ["H", "O"],
+            "descriptor": {
+                "type": "mace",
+                "model_path": str(mace_checkpoint),
+                "sel": 16,
+            },
+            "fitting_net": {
+                "type": "property",
+                "property_name": "band_gap",
+                "task_dim": 1,
+                "neuron": [8],
+            },
+        },
+    )
+    assert property_model.get_fitting_net().task_dim == 1
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        DPEnergyAtomicModel.__init__(object(), None, object(), ["H"])
+    dummy = type("Dummy", (), {"fitting_net": object()})()
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        DPEnergyAtomicModel.compute_or_load_out_stat(dummy)
+    non_mace = MagicMock()
+    non_mace.fitting_net = object()
+    DPEnergyAtomicModel.change_out_bias(non_mace, [])
+    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+        DPEnergyAtomicModel.change_out_bias(dummy, [])
+    energy_model = _energy_model(mace_checkpoint)
+    with pytest.raises(RuntimeError, match="Unknown bias_adjust_mode"):
+        energy_model.atomic_model.change_out_bias(
+            [],
+            bias_adjust_mode="not-a-mode",
+        )
+    with patch(
+        "deepmd.pt.utils.stat.compute_output_stats",
+        return_value=({}, {}),
+    ):
+        energy_model.atomic_model.change_out_bias(
+            [],
+            bias_adjust_mode="set-by-statistic",
+        )
+    hessian_model = get_model(
+        {
+            "type": "standard",
+            "type_map": ["H", "O"],
+            "hessian_mode": True,
+            "descriptor": {
+                "type": "mace",
+                "model_path": str(mace_checkpoint),
+                "sel": 16,
+            },
+            "fitting_net": {
+                "type": "mace_ener",
+                "model_path": str(mace_checkpoint),
+            },
+        },
+    )
+    assert hessian_model is not None
+    energy_model.atomic_model.compute_or_load_out_stat([])
+    one_layer = _write_mace_checkpoint(
+        mace_checkpoint.parent / "one_layer.model",
+        keep_last_layer_irreps=False,
+        num_interactions=1,
+    )
+    one_layer_model = _energy_model(one_layer)
+    coord, box = _sample_coord(pbc=True)
+    energy = one_layer_model(coord.reshape(1, -1), _atype(), box=box)["energy"]
+    assert energy.shape[-1] == 1
+    zeros = ZeroPairRepulsion()(
+        torch.ones(2, device=env.DEVICE),
+        torch.zeros(3, 2, device=env.DEVICE),
+        torch.zeros(2, 2, dtype=torch.long, device=env.DEVICE),
+        torch.tensor([1, 8], device=env.DEVICE),
+    )
+    assert torch.equal(zeros, torch.zeros(3, device=env.DEVICE, dtype=zeros.dtype))
+    name = "_deepmd_gnn_partial_mod"
+    sys.modules[name] = types.ModuleType(name)
+    helper = "_is_partially_initialized"
+    try:
+        assert getattr(pt_mod, helper)("no_such_mod", "x") is False
+        assert getattr(pt_mod, helper)(name, "missing") is True
+        mace_mod = sys.modules["deepmd_gnn.mace"]
+        saved = mace_mod.MaceModel
+        del mace_mod.MaceModel
+        register = "_register"
+        try:
+            getattr(pt_mod, register)()
+        finally:
+            mace_mod.MaceModel = saved
+    finally:
+        del sys.modules[name]
