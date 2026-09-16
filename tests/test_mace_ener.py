@@ -356,7 +356,8 @@ def test_get_model_multitask_shares_descriptor(mace_checkpoint: Path) -> None:
 
 
 def test_serialized_energy_model_roundtrip(
-    mace_checkpoint: Path, tmp_path: Path
+    mace_checkpoint: Path,
+    tmp_path: Path,
 ) -> None:
     """Saved energy models restore the original head without the native pickle."""
     original = _energy_model(mace_checkpoint)
