@@ -318,6 +318,36 @@ class MaceEnergyHead(torch.nn.Module):
         self.atomic_energies_fn = model.atomic_energies_fn
         self.layer_feature_dims = product_layer_feature_dims(model)
 
+    def _load_from_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor],
+        prefix: str,
+        local_metadata: dict[str, Any],
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        """Accept native pickle layouts whose tensors match by numel, not shape."""
+        current = {prefix + name: tensor for name, tensor in self.state_dict().items()}
+        for key, incoming in list(state_dict.items()):
+            target = current.get(key)
+            if (
+                target is not None
+                and incoming.shape != target.shape
+                and incoming.numel() == target.numel()
+            ):
+                state_dict[key] = incoming.reshape(target.shape)
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+
     def node_energy(
         self,
         node_attrs: torch.Tensor,

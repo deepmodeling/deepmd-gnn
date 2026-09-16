@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import types
 from types import SimpleNamespace
@@ -401,6 +402,47 @@ def test_serialized_energy_model_roundtrip(
     assert restored_from_config.get_descriptor().config["num_interactions"] == 2
 
 
+def test_checkpoint_reloads_without_native_pickle(
+    mace_checkpoint: Path,
+    tmp_path: Path,
+) -> None:
+    """Training checkpoints restore after the original MACE pickle is moved."""
+    model_params = {
+        "type": "standard",
+        "type_map": ["H", "O"],
+        "descriptor": {
+            "type": "mace",
+            "model_path": str(mace_checkpoint),
+            "sel": 16,
+        },
+        "fitting_net": {
+            "type": "mace_ener",
+            "model_path": str(mace_checkpoint),
+        },
+    }
+    original = get_model(model_params)
+    script = json.loads(original.get_model_def_script())
+    assert script["descriptor"]["config"]["type_map"] == ["H", "O"]
+    assert script["fitting_net"]["config"]["type_map"] == ["H", "O"]
+    json.dumps(script)
+    wrapper = ModelWrapper(original, model_params=model_params)
+    extra_params = wrapper.state_dict()["_extra_state"]["model_params"]
+    assert extra_params["descriptor"]["config"]["num_interactions"] == 2
+    assert extra_params["fitting_net"]["config"]["num_interactions"] == 2
+    coord, box = _sample_coord(pbc=True)
+    atype = _atype()
+    before = original(coord.reshape(1, -1), atype, box=box)["energy"]
+    saved = tmp_path / "model.ckpt.pt"
+    torch.save({"model": wrapper.state_dict()}, saved)
+    hidden = mace_checkpoint.with_name("hidden_source.model")
+    mace_checkpoint.rename(hidden)
+    from deepmd.pt.infer.inference import Tester  # noqa: PLC0415
+
+    tester = Tester(str(saved))
+    prediction, _, _ = tester.wrapper(coord.reshape(1, -1), atype, box=box)
+    torch.testing.assert_close(prediction["energy"], before, rtol=1e-6, atol=1e-7)
+
+
 def _energy_sample(
     coord: torch.Tensor,
     atype: torch.Tensor,
@@ -613,8 +655,10 @@ def test_plugin_patches_cover_non_mace_and_hessian(mace_checkpoint: Path) -> Non
     pt_mod.load()
     install_atomic = "_install_mace_ener_energy_atomic_model"
     install_standard = "_install_mace_ener_standard_model"
+    install_wrapper = "_install_mace_ener_model_wrapper"
     getattr(pt_mod, install_atomic)()
     getattr(pt_mod, install_standard)()
+    getattr(pt_mod, install_wrapper)()
     property_model = get_model(
         {
             "type": "standard",

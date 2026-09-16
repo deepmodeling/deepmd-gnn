@@ -20,6 +20,53 @@ def _is_partially_initialized(module_name: str, attr_name: str) -> bool:
 
 _MACE_ENER_ATOMIC_PATCHED = False
 _MACE_ENER_STANDARD_PATCHED = False
+_MACE_ENER_WRAPPER_PATCHED = False
+
+
+def _persist_one_mace_model(model: Any, model_params: dict[str, Any]) -> None:  # noqa: ANN401
+    """Write inferred MACE constructor configs into checkpoint model parameters."""
+    from deepmd_gnn.mace_checkpoint import (  # noqa: PLC0415
+        persistable_checkpoint_config,
+    )
+    from deepmd_gnn.mace_descriptor import MaceDescriptor  # noqa: PLC0415
+    from deepmd_gnn.mace_ener import MaceEnergyFitting  # noqa: PLC0415
+
+    get_descriptor = getattr(model, "get_descriptor", None)
+    get_fitting = getattr(model, "get_fitting_net", None)
+    descriptor = get_descriptor() if callable(get_descriptor) else None
+    fitting = get_fitting() if callable(get_fitting) else None
+    if isinstance(descriptor, MaceDescriptor):
+        model_params.setdefault("descriptor", {})["config"] = (
+            persistable_checkpoint_config(descriptor.config)
+        )
+    if isinstance(fitting, MaceEnergyFitting):
+        model_params.setdefault("fitting_net", {})["config"] = (
+            persistable_checkpoint_config(fitting.config)
+        )
+
+
+def _persist_mace_runtime_configs(
+    model: Any,  # noqa: ANN401
+    model_params: dict[str, Any] | None,
+) -> None:
+    """Copy live MACE configs into the dict DeePMD stores on the wrapper."""
+    if not model_params:
+        return
+    named_models = (
+        dict(model.items())
+        if hasattr(model, "items") and not hasattr(model, "get_descriptor")
+        else None
+    )
+    if "model_dict" in model_params:
+        for key, sub_params in model_params["model_dict"].items():
+            live = None if named_models is None else named_models.get(key)
+            if live is not None:
+                _persist_mace_runtime_configs(live, sub_params)
+        return
+    live = model
+    if named_models is not None:
+        live = named_models.get("Default") or next(iter(named_models.values()), model)
+    _persist_one_mace_model(live, model_params)
 
 
 def _install_mace_ener_energy_atomic_model() -> None:
@@ -161,11 +208,43 @@ def _install_mace_ener_standard_model() -> None:
         )
         if model_params.get("hessian_mode"):
             model.enable_hessian()
+        _persist_mace_runtime_configs(model, model_params_old)
         model.model_def_script = json.dumps(model_params_old)
         return model
 
     model_mod.get_standard_model = get_standard_model_with_mace_ener
     _MACE_ENER_STANDARD_PATCHED = True
+
+
+def _install_mace_ener_model_wrapper() -> None:
+    """Keep wrapper/checkpoint model_params self-contained after native pickle load."""
+    global _MACE_ENER_WRAPPER_PATCHED  # noqa: PLW0603
+    from deepmd.pt.train.wrapper import ModelWrapper  # noqa: PLC0415
+
+    if _MACE_ENER_WRAPPER_PATCHED:
+        return
+
+    original_init = ModelWrapper.__init__
+    original_extra = ModelWrapper.get_extra_state
+
+    def init_with_mace_configs(
+        self: Any,  # noqa: ANN401
+        model: Any,  # noqa: ANN401
+        loss: Any = None,  # noqa: ANN401
+        model_params: dict[str, Any] | None = None,
+        shared_links: dict[str, Any] | None = None,
+        modifier: Any = None,  # noqa: ANN401
+    ) -> None:
+        original_init(self, model, loss, model_params, shared_links, modifier)
+        _persist_mace_runtime_configs(self.model, self.model_params)
+
+    def extra_state_with_mace_configs(self: Any) -> dict[str, Any]:  # noqa: ANN401
+        _persist_mace_runtime_configs(self.model, self.model_params)
+        return original_extra(self)
+
+    ModelWrapper.__init__ = init_with_mace_configs  # type: ignore[method-assign]
+    ModelWrapper.get_extra_state = extra_state_with_mace_configs  # type: ignore[method-assign]
+    _MACE_ENER_WRAPPER_PATCHED = True
 
 
 def _register() -> None:
@@ -194,6 +273,7 @@ def _register() -> None:
     PyTorchBaseModel.register("nequip")(NequipModel)
     _install_mace_ener_energy_atomic_model()
     _install_mace_ener_standard_model()
+    _install_mace_ener_model_wrapper()
 
 
 _register()
