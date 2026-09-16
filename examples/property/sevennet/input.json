@@ -15,6 +15,7 @@
       "type": "property",
       "property_name": "band_gap",
       "task_dim": 1,
+      "intensive": true,
       "neuron": [
         128,
         128

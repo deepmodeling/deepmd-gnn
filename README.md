@@ -143,7 +143,8 @@ DeePMD property model. See
   "fitting_net": {
     "type": "property",
     "property_name": "band_gap",
-    "task_dim": 1
+    "task_dim": 1,
+    "intensive": true
   }
 }
 ```
@@ -179,6 +180,55 @@ interaction classes, layer-dependent correlation, named heads, pair
 repulsion, and mixed final irreps. This covers compatible MACE-MP-0 and MPA-0
 checkpoints without changing the separate conservative MACE-OFF energy-model
 conversion path.
+
+The same descriptor can also keep the original MACE energy head as a DeePMD
+fitting (`mace_ener`) and share the backbone with a property branch. This is
+the DPA-style workflow: one pretrained GNN, the native energy/force readout on
+energy data, and `PropertyFittingNet` on property data. It is not a second MLP
+on the property `0e` features, and it does not change `model.type: mace` or the
+LAMMPS energy path. See
+[`examples/property/mace/input_multitask.json`](examples/property/mace/input_multitask.json):
+
+```json
+"model": {
+  "shared_dict": {
+    "type_map": ["H", "O"],
+    "mace_descriptor": {
+      "type": "mace",
+      "model_path": "./trusted_single_head_mace_mp_or_mpa.model",
+      "sel": 64,
+      "trainable": true
+    }
+  },
+  "model_dict": {
+    "force_field": {
+      "type_map": "type_map",
+      "descriptor": "mace_descriptor",
+      "fitting_net": {
+        "type": "mace_ener",
+        "model_path": "./trusted_single_head_mace_mp_or_mpa.model"
+      }
+    },
+    "band_gap": {
+      "type_map": "type_map",
+      "descriptor": "mace_descriptor",
+      "fitting_net": {
+        "type": "property",
+        "property_name": "band_gap",
+        "task_dim": 1,
+        "intensive": true
+      }
+    }
+  }
+}
+```
+
+Set `intensive: true` on the property fitting when labels are per-structure
+(for example band gaps). After `share_params` level 0 the two branches use the
+same backbone object; energy readouts stay only on `mace_ener`. Pair-repulsion
+and per-layer node features are packed beside the property `0e` output so the
+energy head can run without rebuilding the graph. Energy data and property data
+are listed separately under `training.data_dict`.
 
 This descriptor path currently supports only `dp --pt`. The `pt_expt`
 backend, cuEquivariance checkpoint conversion, MACE-MH/multi-head checkpoints,
@@ -414,7 +464,8 @@ Then use it in a standard descriptor/fitting configuration:
   "fitting_net": {
     "type": "property",
     "property_name": "band_prop",
-    "task_dim": 1
+    "task_dim": 1,
+    "intensive": true
   }
 }
 ```
@@ -461,6 +512,7 @@ checkpoint `chemical_species` list exactly, including unused elements.
     "type": "property",
     "property_name": "band_gap",
     "task_dim": 1,
+    "intensive": true,
     "neuron": [128, 128]
   }
 }

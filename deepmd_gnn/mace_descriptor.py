@@ -21,6 +21,7 @@ from deepmd_gnn.mace_checkpoint import (
     inspect_native_mace_checkpoint,
     load_native_mace_checkpoint,
     persistable_checkpoint_config,
+    product_layer_feature_dims,
     validate_mace_state_dict_load,
 )
 
@@ -146,6 +147,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         # buffers into state_dict keys, which then fail to load training
         # checkpoints that never saved them.
         self.scalar_even_indices = scalar_indices
+        self.layer_feature_dims = product_layer_feature_dims(self.backbone)
         self.backbone_float64 = next(self.backbone.parameters()).dtype == torch.float64
         for parameter in self.backbone.parameters():
             parameter.requires_grad_(self.trainable)
@@ -255,6 +257,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             raise NotImplementedError(msg)
         self.backbone = base_class.backbone
         self.scalar_even_indices = base_class.scalar_even_indices
+        self.layer_feature_dims = base_class.layer_feature_dims
         self.backbone_float64 = base_class.backbone_float64
 
     def change_type_map(
@@ -267,13 +270,14 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         msg = "MACE descriptor does not support changing or subsetting type_map"
         raise NotImplementedError(msg)
 
-    def _final_product_features(
+    def _mace_graph_outputs(
         self,
         extended_coord: torch.Tensor,
         extended_atype: torch.Tensor,
         nlist: torch.Tensor,
         mapping: torch.Tensor | None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return last-layer features, packed per-layer features, and pair energy."""
         nf, nloc, _ = nlist.shape
         nall = extended_atype.shape[1]
         positions = extended_coord.view(nf, nall, 3)
@@ -321,6 +325,13 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             edge_index,
             self.backbone.atomic_numbers,
         )
+        pair_energy = self.backbone.pair_repulsion_fn(
+            lengths,
+            node_attrs,
+            edge_index,
+            self.backbone.atomic_numbers,
+        ).view(nf, nloc, 1)
+        layer_features: list[torch.Tensor] = []
         first_layer = True
         for interaction, product in zip(  # noqa: B905
             self.backbone.interactions,
@@ -340,8 +351,28 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
                 sc=sc,
                 node_attrs=node_attrs,
             )
+            layer_features.append(node_feats.view(nf, nloc, -1))
             first_layer = False
-        return node_feats.view(nf, nloc, -1)
+        packed = layer_features[0]
+        for layer in layer_features[1:]:
+            packed = torch.cat([packed, layer], dim=-1)
+        return layer_features[-1], packed, pair_energy
+
+    def _final_product_features(
+        self,
+        extended_coord: torch.Tensor,
+        extended_atype: torch.Tensor,
+        nlist: torch.Tensor,
+        mapping: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Return last-layer product features for property tests."""
+        last_layer, _, _ = self._mace_graph_outputs(
+            extended_coord,
+            extended_atype,
+            nlist,
+            mapping,
+        )
+        return last_layer
 
     def forward(
         self,
@@ -364,7 +395,7 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
             msg = "MPI communication is out of scope for the MACE descriptor"
             raise NotImplementedError(msg)
         del fparam, charge_spin
-        features = self._final_product_features(
+        last_layer, packed, pair_energy = self._mace_graph_outputs(
             extended_coord,
             extended_atype,
             nlist,
@@ -373,18 +404,18 @@ class MaceDescriptor(BaseDescriptor, torch.nn.Module):
         scalar_index = torch.tensor(
             self.scalar_even_indices,
             dtype=torch.int64,
-            device=features.device,
+            device=last_layer.device,
         )
         invariant = torch.index_select(
-            features,
+            last_layer,
             dim=-1,
             index=scalar_index,
         )
         return (
             invariant.to(env.GLOBAL_PT_FLOAT_PRECISION),
             None,
-            None,
-            None,
+            packed,
+            pair_energy,
             None,
         )
 
