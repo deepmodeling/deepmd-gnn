@@ -355,7 +355,7 @@ def test_mpa_like_checkpoint_roundtrip_and_gradient(
     assert descriptor.config["correlation"] == [2, 3]
     assert descriptor.config["keep_last_layer_irreps"] is True
     state_names = set(descriptor.backbone.state_dict())
-    assert not any("pair_repulsion" in name for name in state_names)
+    assert any("pair_repulsion" in name for name in state_names)
     assert not any("atomic_energies" in name for name in state_names)
     assert not any("readout" in name for name in state_names)
     assert not any("scale_shift" in name for name in state_names)

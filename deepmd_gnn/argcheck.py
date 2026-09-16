@@ -3,6 +3,7 @@
 from dargs import Argument
 from deepmd.utils.argcheck import (
     descrpt_args_plugin,
+    fitting_args_plugin,
     model_args_plugin,
 )
 
@@ -51,6 +52,49 @@ def mace_descriptor_args() -> Argument:
         doc=(
             "PyTorch-only MACE descriptor exposing invariant 0e channels from "
             "the final product layer."
+        ),
+    )
+
+
+@fitting_args_plugin.register("mace_ener")
+def mace_ener_fitting_args() -> Argument:
+    """Arguments for the original MACE energy head used as a DeePMD fitting."""
+    return Argument(
+        "mace_ener",
+        dict,
+        [
+            Argument(
+                "model_path",
+                str,
+                optional=True,
+                doc=(
+                    "Path to a trusted native mace.modules.ScaleShiftMACE "
+                    "pickle checkpoint. Required for initialization; saved "
+                    "DeePMD checkpoints restore from the persisted config."
+                ),
+            ),
+            Argument(
+                "config",
+                dict,
+                optional=True,
+                doc=(
+                    "Inferred MACE backbone architecture persisted into the "
+                    "saved model definition so restoration does not reopen "
+                    "the native pickle."
+                ),
+            ),
+            Argument(
+                "trainable",
+                bool,
+                optional=True,
+                default=True,
+                doc="Whether to optimize the original MACE energy head.",
+            ),
+        ],
+        doc=(
+            "PT-only fitting that keeps the pretrained MACE energy readout, "
+            "scale/shift, and per-element energies. Forces come from autograd "
+            "through the shared MACE descriptor."
         ),
     )
 

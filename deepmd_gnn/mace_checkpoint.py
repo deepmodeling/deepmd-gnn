@@ -274,6 +274,83 @@ def inspect_native_mace_checkpoint(model: ScaleShiftMACE) -> MaceCheckpointConfi
     }
 
 
+class ZeroPairRepulsion(torch.nn.Module):
+    """Return zeros when a checkpoint has no pair-repulsion term."""
+
+    def forward(
+        self,
+        lengths: torch.Tensor,
+        node_attrs: torch.Tensor,
+        edge_index: torch.Tensor,
+        atomic_numbers: torch.Tensor,
+    ) -> torch.Tensor:
+        del edge_index, atomic_numbers
+        return torch.zeros(
+            node_attrs.shape[0],
+            dtype=lengths.dtype,
+            device=lengths.device,
+        )
+
+
+def product_layer_feature_dims(model: torch.nn.Module) -> list[int]:
+    """Return the flattened feature width of each product layer."""
+    products = getattr(model, "products", None)
+    if products is None or len(products) == 0:
+        msg = "MACE model has no product layers"
+        raise ValueError(msg)
+    dims: list[int] = []
+    for product in products:
+        irreps_out = getattr(getattr(product, "linear", None), "irreps_out", None)
+        if irreps_out is None:
+            msg = "MACE product layer does not expose output irreps"
+            raise ValueError(msg)
+        dims.append(int(o3.Irreps(irreps_out).dim))
+    return dims
+
+
+class MaceEnergyHead(torch.nn.Module):
+    """Original MACE energy readout, scale/shift, and per-element energies."""
+
+    def __init__(self, model: ScaleShiftMACE) -> None:
+        super().__init__()
+        self.readouts = model.readouts
+        self.scale_shift = model.scale_shift
+        self.atomic_energies_fn = model.atomic_energies_fn
+        self.layer_feature_dims = product_layer_feature_dims(model)
+
+    def node_energy(
+        self,
+        node_attrs: torch.Tensor,
+        layer_features: list[torch.Tensor],
+        pair_energy: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return per-atom energies for a compact local-atom graph."""
+        n_nodes = node_attrs.shape[0]
+        node_heads = torch.zeros(
+            (n_nodes,),
+            dtype=torch.int64,
+            device=node_attrs.device,
+        )
+        num_atoms_arange = torch.arange(
+            n_nodes,
+            dtype=torch.int64,
+            device=node_attrs.device,
+        )
+        node_e0 = self.atomic_energies_fn(node_attrs)[num_atoms_arange, node_heads]
+        node_es_list = [pair_energy.reshape(n_nodes)]
+        for i, readout in enumerate(self.readouts):
+            feat_idx = -1 if len(self.readouts) == 1 else i
+            node_es_list.append(
+                readout(layer_features[feat_idx], node_heads)[
+                    num_atoms_arange,
+                    node_heads,
+                ],
+            )
+        node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)
+        node_inter_es = self.scale_shift(node_inter_es, node_heads)
+        return node_e0 + node_inter_es
+
+
 class MaceFeatureBackbone(torch.nn.Module):
     """Only the MACE modules that contribute to product-layer features."""
 
@@ -284,6 +361,12 @@ class MaceFeatureBackbone(torch.nn.Module):
         self.radial_embedding = model.radial_embedding
         self.interactions = model.interactions
         self.products = model.products
+        pair_repulsion_fn = getattr(model, "pair_repulsion_fn", None)
+        self.pair_repulsion_fn = (
+            pair_repulsion_fn
+            if pair_repulsion_fn is not None
+            else ZeroPairRepulsion()
+        )
         # Older native pickles predate MACE's zero-path flags. Derive exactly
         # the same flags from their existing CG tensors before training saves
         # state: Tester scripts a reconstructed model before a strict load, so
@@ -303,10 +386,10 @@ class MaceFeatureBackbone(torch.nn.Module):
         self.register_buffer("atomic_numbers", model.atomic_numbers.detach().clone())
 
 
-def build_mace_feature_backbone(
+def _build_native_mace_from_config(
     config: MaceCheckpointConfig | dict[str, Any],
-) -> MaceFeatureBackbone:
-    """Rebuild a feature-only backbone from inspected checkpoint metadata."""
+) -> ScaleShiftMACE:
+    """Rebuild a ScaleShiftMACE from persisted constructor metadata."""
     # Keep this import local: mace_network imports DeePMD's PT environment, whose
     # entry-point registration imports MaceDescriptor and therefore this module.
     from deepmd_gnn.mace_network import make_mace_network  # noqa: PLC0415
@@ -315,7 +398,7 @@ def build_mace_feature_backbone(
     source_dtype = getattr(torch, dtype_name)
     atomic_numbers = [chemical_symbols.index(name) for name in config["type_map"]]
     with temporary_default_dtype(source_dtype):
-        model = make_mace_network(
+        return make_mace_network(
             r_max=config["r_max"],
             num_radial_basis=config["num_radial_basis"],
             num_cutoff_basis=config["num_cutoff_basis"],
@@ -348,17 +431,33 @@ def build_mace_feature_backbone(
             keep_last_layer_irreps=config["keep_last_layer_irreps"],
             heads=config["heads"],
         )
-    return MaceFeatureBackbone(model)
+
+
+def build_mace_feature_backbone(
+    config: MaceCheckpointConfig | dict[str, Any],
+) -> MaceFeatureBackbone:
+    """Rebuild a feature-only backbone from inspected checkpoint metadata."""
+    return MaceFeatureBackbone(_build_native_mace_from_config(config))
+
+
+def build_mace_energy_head(
+    config: MaceCheckpointConfig | dict[str, Any],
+) -> MaceEnergyHead:
+    """Rebuild the original MACE energy head from persisted constructor metadata."""
+    return MaceEnergyHead(_build_native_mace_from_config(config))
 
 
 __all__ = [
     "ALLOWED_MISSING_STATE_DICT_SUFFIXES",
     "MaceCheckpointConfig",
+    "MaceEnergyHead",
     "MaceFeatureBackbone",
+    "build_mace_energy_head",
     "build_mace_feature_backbone",
     "inspect_native_mace_checkpoint",
     "load_native_mace_checkpoint",
     "persistable_checkpoint_config",
+    "product_layer_feature_dims",
     "temporary_default_dtype",
     "validate_mace_state_dict_load",
 ]
