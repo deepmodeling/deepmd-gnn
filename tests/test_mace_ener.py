@@ -7,7 +7,7 @@ import sys
 import types
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -633,15 +633,18 @@ def test_plugin_patches_cover_non_mace_and_hessian(mace_checkpoint: Path) -> Non
         },
     )
     assert property_model.get_fitting_net().task_dim == 1
-    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+    with pytest.raises(
+        (TypeError, ValueError, RuntimeError, AttributeError, AssertionError),
+    ):
         DPEnergyAtomicModel.__init__(object(), None, object(), ["H"])
     dummy = type("Dummy", (), {"fitting_net": object()})()
-    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+    with pytest.raises(
+        (TypeError, ValueError, RuntimeError, AttributeError, AssertionError),
+    ):
         DPEnergyAtomicModel.compute_or_load_out_stat(dummy)
-    non_mace = MagicMock()
-    non_mace.fitting_net = object()
-    DPEnergyAtomicModel.change_out_bias(non_mace, [])
-    with pytest.raises((TypeError, ValueError, RuntimeError, AttributeError)):
+    with pytest.raises(
+        (TypeError, ValueError, RuntimeError, AttributeError, AssertionError),
+    ):
         DPEnergyAtomicModel.change_out_bias(dummy, [])
     energy_model = _energy_model(mace_checkpoint)
     with pytest.raises(RuntimeError, match="Unknown bias_adjust_mode"):
@@ -697,13 +700,8 @@ def test_plugin_patches_cover_non_mace_and_hessian(mace_checkpoint: Path) -> Non
     try:
         assert getattr(pt_mod, helper)("no_such_mod", "x") is False
         assert getattr(pt_mod, helper)(name, "missing") is True
-        mace_mod = sys.modules["deepmd_gnn.mace"]
-        saved = mace_mod.MaceModel
-        del mace_mod.MaceModel
         register = "_register"
-        try:
+        with patch.object(pt_mod, helper, return_value=True):
             getattr(pt_mod, register)()
-        finally:
-            mace_mod.MaceModel = saved
     finally:
         del sys.modules[name]

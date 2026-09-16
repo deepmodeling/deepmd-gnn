@@ -72,48 +72,46 @@ def _install_mace_ener_energy_atomic_model() -> None:
         bias_adjust_mode: str = "change-by-statistic",
     ) -> None:
         """Finetune residual goes to ``out_bias``; set-by-statistic replaces e0."""
-        if not isinstance(self.fitting_net, MaceEnergyFitting):
+        if (
+            not isinstance(
+                self.fitting_net,
+                MaceEnergyFitting,
+            )
+            or bias_adjust_mode == "change-by-statistic"
+        ):
             original_change(
                 self,
                 sample_merged,
                 stat_file_path=stat_file_path,
                 bias_adjust_mode=bias_adjust_mode,
             )
-            return
-        if bias_adjust_mode == "change-by-statistic":
-            original_change(
-                self,
-                sample_merged,
-                stat_file_path=stat_file_path,
-                bias_adjust_mode=bias_adjust_mode,
-            )
-            return
-        if bias_adjust_mode != "set-by-statistic":
+        elif bias_adjust_mode != "set-by-statistic":
             msg = "Unknown bias_adjust_mode mode: " + bias_adjust_mode
             raise RuntimeError(msg)
-        from deepmd.pt.utils.stat import compute_output_stats  # noqa: PLC0415
+        else:
+            from deepmd.pt.utils.stat import compute_output_stats  # noqa: PLC0415
 
-        bias_out, _std = compute_output_stats(
-            sample_merged,
-            self.get_ntypes(),
-            keys=self.bias_keys,
-            stat_file_path=stat_file_path,
-            rcond=self.rcond,
-            preset_bias=self.preset_out_bias,
-            stats_distinguish_types=self.get_compute_stats_distinguish_types(),
-            intensive=self.get_intensive(),
-        )
-        if "energy" not in bias_out:
-            return
-        energies = self.fitting_net.head.atomic_energies_fn.atomic_energies
-        energies.copy_(
-            bias_out["energy"]
-            .reshape(energies.shape)
-            .to(
-                dtype=energies.dtype,
-                device=energies.device,
-            ),
-        )
+            bias_out, _std = compute_output_stats(
+                sample_merged,
+                self.get_ntypes(),
+                keys=self.bias_keys,
+                stat_file_path=stat_file_path,
+                rcond=self.rcond,
+                preset_bias=self.preset_out_bias,
+                stats_distinguish_types=self.get_compute_stats_distinguish_types(),
+                intensive=self.get_intensive(),
+            )
+            if "energy" not in bias_out:
+                return
+            energies = self.fitting_net.head.atomic_energies_fn.atomic_energies
+            energies.copy_(
+                bias_out["energy"]
+                .reshape(energies.shape)
+                .to(
+                    dtype=energies.dtype,
+                    device=energies.device,
+                ),
+            )
 
     DPEnergyAtomicModel.__init__ = init_with_mace_ener  # type: ignore[method-assign]
     DPEnergyAtomicModel.compute_or_load_out_stat = (  # type: ignore[method-assign]
