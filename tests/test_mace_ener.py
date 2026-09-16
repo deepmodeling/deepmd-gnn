@@ -347,13 +347,17 @@ def test_get_model_multitask_shares_descriptor(mace_checkpoint: Path) -> None:
     assert isinstance(fitting, MaceEnergyFitting)
     coord, box = _sample_coord(pbc=False)
     atype = _atype()
-    energy = wrapper.model["force_field"](coord.reshape(1, -1), atype, box=box)["energy"]
+    energy = wrapper.model["force_field"](coord.reshape(1, -1), atype, box=box)[
+        "energy"
+    ]
     prop = wrapper.model["band_gap"](coord.reshape(1, -1), atype, box=box)["band_gap"]
     assert energy.shape == (1, 1)
     assert prop.shape[0] == 1
 
 
-def test_serialized_energy_model_roundtrip(mace_checkpoint: Path, tmp_path: Path) -> None:
+def test_serialized_energy_model_roundtrip(
+    mace_checkpoint: Path, tmp_path: Path
+) -> None:
     """Saved energy models restore the original head without the native pickle."""
     original = _energy_model(mace_checkpoint)
     serialized = original.serialize()
@@ -443,9 +447,7 @@ def test_compute_or_load_out_stat_does_not_stack_data_bias(
     atype = _atype()
     before = model(coord.reshape(1, -1), atype, box=box)["energy"]
     e0_before = (
-        model.get_fitting_net()
-        .head.atomic_energies_fn.atomic_energies.detach()
-        .clone()
+        model.get_fitting_net().head.atomic_energies_fn.atomic_energies.detach().clone()
     )
     sample = _energy_sample(coord, atype, box, before + 100.0)
     model.compute_or_load_stat(lambda: [sample])
@@ -465,9 +467,7 @@ def test_change_by_statistic_is_residual_shift(mace_checkpoint: Path) -> None:
     atype = _atype()
     predicted = model(coord.reshape(1, -1), atype, box=box)["energy"].detach()
     e0_before = (
-        model.get_fitting_net()
-        .head.atomic_energies_fn.atomic_energies.detach()
-        .clone()
+        model.get_fitting_net().head.atomic_energies_fn.atomic_energies.detach().clone()
     )
     model.change_out_bias(
         [_energy_sample(coord, atype, box, predicted)],
@@ -504,9 +504,7 @@ def test_set_by_statistic_replaces_e0_not_out_bias(mace_checkpoint: Path) -> Non
     atype = _atype()
     predicted = model(coord.reshape(1, -1), atype, box=box)["energy"].detach()
     e0_before = (
-        model.get_fitting_net()
-        .head.atomic_energies_fn.atomic_energies.detach()
-        .clone()
+        model.get_fitting_net().head.atomic_energies_fn.atomic_energies.detach().clone()
     )
     model.change_out_bias(
         [_energy_sample(coord, atype, box, predicted + 6.0)],

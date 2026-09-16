@@ -363,9 +363,7 @@ class MaceFeatureBackbone(torch.nn.Module):
         self.products = model.products
         pair_repulsion_fn = getattr(model, "pair_repulsion_fn", None)
         self.pair_repulsion_fn = (
-            pair_repulsion_fn
-            if pair_repulsion_fn is not None
-            else ZeroPairRepulsion()
+            pair_repulsion_fn if pair_repulsion_fn is not None else ZeroPairRepulsion()
         )
         # Older native pickles predate MACE's zero-path flags. Derive exactly
         # the same flags from their existing CG tensors before training saves

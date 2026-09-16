@@ -107,7 +107,9 @@ def _install_mace_ener_energy_atomic_model() -> None:
             return
         energies = self.fitting_net.head.atomic_energies_fn.atomic_energies
         energies.copy_(
-            bias_out["energy"].reshape(energies.shape).to(
+            bias_out["energy"]
+            .reshape(energies.shape)
+            .to(
                 dtype=energies.dtype,
                 device=energies.device,
             ),
