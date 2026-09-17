@@ -49,7 +49,7 @@ def tests(session: nox.Session) -> None:
 
 @nox.session
 def sevennet(session: nox.Session) -> None:
-    """Run SevenNet descriptor tests with e3nn>=0.5."""
+    """Run SevenNet descriptor and energy-fitting tests with e3nn>=0.5."""
     session.install(
         "numpy",
         "deepmd-kit[torch]>=3.2.0b0",
@@ -62,6 +62,7 @@ def sevennet(session: nox.Session) -> None:
     session.run(
         "pytest",
         "tests/test_sevennet_descriptor.py",
+        "tests/test_sevennet_ener.py",
         "-m",
         "not slow",
         "--cov",

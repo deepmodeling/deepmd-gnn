@@ -13,7 +13,9 @@ from deepmd_gnn.argcheck import (  # noqa: F401
     mace_ener_fitting_args,
     mace_model_args,
     nequip_descriptor_args,
+    nequip_ener_fitting_args,
     sevennet_descriptor_args,
+    sevennet_ener_fitting_args,
 )
 
 example_path = Path(__file__).parent.parent / "examples"
@@ -24,10 +26,15 @@ examples = (
     example_path / "water" / "nequip" / "input.json",
     example_path / "dprc" / "nequip" / "input.json",
     example_path / "property" / "mace" / "input.json",
+    example_path / "property" / "nequip" / "input.json",
     example_path / "property" / "sevennet" / "input.json",
 )
 
-multitask_examples = (example_path / "property" / "mace" / "input_multitask.json",)
+multitask_examples = (
+    example_path / "property" / "mace" / "input_multitask.json",
+    example_path / "property" / "nequip" / "input_multitask.json",
+    example_path / "property" / "sevennet" / "input_multitask.json",
+)
 
 
 @pytest.mark.parametrize("example", examples)

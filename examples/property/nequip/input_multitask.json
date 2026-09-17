@@ -1,0 +1,97 @@
+{
+  "_comment": "DPA-style NequIP multitask: shared descriptor, original energy head, property head.",
+  "model": {
+    "shared_dict": {
+      "type_map": [
+        "O",
+        "H"
+      ],
+      "nequip_descriptor": {
+        "type": "nequip",
+        "sel": "auto",
+        "model_file": "nequip_model.pt",
+        "trainable": true
+      }
+    },
+    "model_dict": {
+      "force_field": {
+        "type_map": "type_map",
+        "descriptor": "nequip_descriptor",
+        "fitting_net": {
+          "type": "nequip_ener",
+          "model_file": "nequip_model.pt"
+        }
+      },
+      "band_gap": {
+        "type_map": "type_map",
+        "descriptor": "nequip_descriptor",
+        "fitting_net": {
+          "type": "property",
+          "property_name": "band_gap",
+          "task_dim": 1,
+          "intensive": true,
+          "neuron": [
+            64,
+            64
+          ],
+          "precision": "float32"
+        }
+      }
+    }
+  },
+  "learning_rate": {
+    "type": "exp",
+    "decay_steps": 5000,
+    "start_lr": 0.001,
+    "stop_lr": 1e-08
+  },
+  "loss_dict": {
+    "force_field": {
+      "type": "ener",
+      "start_pref_e": 0.02,
+      "limit_pref_e": 1,
+      "start_pref_f": 1000,
+      "limit_pref_f": 1,
+      "start_pref_v": 0,
+      "limit_pref_v": 0
+    },
+    "band_gap": {
+      "type": "property"
+    }
+  },
+  "training": {
+    "model_prob": {
+      "force_field": 1.0,
+      "band_gap": 1.0
+    },
+    "data_dict": {
+      "force_field": {
+        "training_data": {
+          "systems": [
+            "../../water/data/data_0",
+            "../../water/data/data_1",
+            "../../water/data/data_2"
+          ],
+          "batch_size": 1
+        },
+        "validation_data": {
+          "systems": [
+            "../../water/data/data_3"
+          ],
+          "batch_size": 1
+        }
+      },
+      "band_gap": {
+        "training_data": {
+          "systems": [
+            "../../data/data_0"
+          ],
+          "batch_size": 1
+        }
+      }
+    },
+    "numb_steps": 100000,
+    "disp_freq": 100,
+    "save_freq": 1000
+  }
+}
