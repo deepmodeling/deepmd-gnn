@@ -7,6 +7,7 @@ from .argcheck import (
     mace_descriptor_args,
     mace_ener_fitting_args,
     mace_model_args,
+    mattersim_descriptor_args,
     nequip_descriptor_args,
     sevennet_descriptor_args,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "mace_descriptor_args",
     "mace_ener_fitting_args",
     "mace_model_args",
+    "mattersim_descriptor_args",
     "nequip_descriptor_args",
     "sevennet_descriptor_args",
 ]

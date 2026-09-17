@@ -26,22 +26,30 @@ _MACE_ENER_WRAPPER_PATCHED = False
 def _persist_one_mace_model(model: Any, model_params: dict[str, Any]) -> None:  # noqa: ANN401
     """Write inferred MACE constructor configs into checkpoint model parameters."""
     from deepmd_gnn.mace_checkpoint import (  # noqa: PLC0415
-        persistable_checkpoint_config,
+        persistable_checkpoint_config as persistable_mace_config,
     )
     from deepmd_gnn.mace_descriptor import MaceDescriptor  # noqa: PLC0415
     from deepmd_gnn.mace_ener import MaceEnergyFitting  # noqa: PLC0415
+    from deepmd_gnn.mattersim_checkpoint import (  # noqa: PLC0415
+        persistable_checkpoint_config as persistable_mattersim_config,
+    )
+    from deepmd_gnn.mattersim_descriptor import MatterSimDescriptor  # noqa: PLC0415
 
     get_descriptor = getattr(model, "get_descriptor", None)
     get_fitting = getattr(model, "get_fitting_net", None)
     descriptor = get_descriptor() if callable(get_descriptor) else None
     fitting = get_fitting() if callable(get_fitting) else None
     if isinstance(descriptor, MaceDescriptor):
+        model_params.setdefault("descriptor", {})["config"] = persistable_mace_config(
+            descriptor.config,
+        )
+    if isinstance(descriptor, MatterSimDescriptor):
         model_params.setdefault("descriptor", {})["config"] = (
-            persistable_checkpoint_config(descriptor.config)
+            persistable_mattersim_config(descriptor.config)
         )
     if isinstance(fitting, MaceEnergyFitting):
-        model_params.setdefault("fitting_net", {})["config"] = (
-            persistable_checkpoint_config(fitting.config)
+        model_params.setdefault("fitting_net", {})["config"] = persistable_mace_config(
+            fitting.config,
         )
 
 
@@ -262,6 +270,7 @@ def _register() -> None:
     )
 
     import deepmd_gnn.mace_descriptor  # noqa: PLC0415
+    import deepmd_gnn.mattersim_descriptor  # noqa: PLC0415
     import deepmd_gnn.nequip_descriptor  # noqa: PLC0415
 
     with contextlib.suppress(ImportError):
