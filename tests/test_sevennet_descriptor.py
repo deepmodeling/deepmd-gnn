@@ -35,6 +35,8 @@ from deepmd_gnn.sevennet_checkpoint import (
     ENERGY_MODULE_NAMES,
     _dtype_from_name,
     _infer_state_dtype,
+    energy_input_dim,
+    extract_energy_head_modules,
     json_safe_value,
     last_feature_irreps,
     load_sevennet_checkpoint_config,
@@ -55,8 +57,8 @@ def _tiny_sevenn_config() -> dict:
     config[KEY.LMAX] = 1
     config[KEY.NUM_CONVOLUTION] = 2
     config[KEY.CONV_DENOMINATOR] = 4.0
-    config[KEY.SHIFT] = 0.0
-    config[KEY.SCALE] = 1.0
+    config[KEY.SHIFT] = [0.0, 0.0]
+    config[KEY.SCALE] = [1.0, 1.0]
     config[KEY.CONVOLUTION_WEIGHT_NN_HIDDEN_NEURONS] = [8]
     config["radial_basis"] = {
         "radial_basis_name": "bessel",
@@ -413,6 +415,7 @@ def test_checkpoint_helpers_cover_unsupported_and_json_paths(
             "b": np.bool_(True),  # noqa: FBT003
             "p": tmp_path / "x",
             "t": (1, 2),
+            "dev": torch.device("cpu"),
         },
     )
     assert payload["1"] == [1.5]
@@ -422,6 +425,7 @@ def test_checkpoint_helpers_cover_unsupported_and_json_paths(
     assert payload["b"] is True
     assert payload["p"].endswith("x")
     assert payload["t"] == [1, 2]
+    assert payload["dev"] == "cpu"
     json.dumps(payload)
 
     restored = restore_sevenn_config({"_type_map": {"0": 1, "1": 8}})
@@ -477,6 +481,31 @@ def test_checkpoint_helpers_cover_unsupported_and_json_paths(
 
     with pytest.raises(RuntimeError, match="Failed to load"):
         validate_sevennet_state_dict_load(_LoadResult())
+
+    class _Empty(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self._modules: dict[str, torch.nn.Module] = {}
+
+    with pytest.raises(ValueError, match="rescale_atomic_energy"):
+        extract_energy_head_modules(_Empty())
+
+    class _NoReadout(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self._modules = {"rescale_atomic_energy": torch.nn.Identity()}
+
+    with pytest.raises(ValueError, match="reduce_input_to_hidden"):
+        extract_energy_head_modules(_NoReadout())
+
+    with pytest.raises(ValueError, match="input irrep"):
+        energy_input_dim({"rescale_atomic_energy": torch.nn.Identity()})
+
+    class _NoIrreps(torch.nn.Module):
+        irreps_in = None
+
+    with pytest.raises(ValueError, match="does not expose"):
+        energy_input_dim({"reduce_input_to_hidden": _NoIrreps()})
 
 
 def test_forward_shape_rotation_invariance_and_gradient(

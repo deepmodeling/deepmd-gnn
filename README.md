@@ -479,6 +479,13 @@ load files from a trusted source. Native NequIP 0.7+ foundation checkpoints,
 SevenNet checkpoints, `pt_expt`, descriptor MPI communication, and descriptor
 deployment/LAMMPS are not supported by this path.
 
+The same descriptor can also keep the original NequIP energy readout as a
+DeePMD fitting (`nequip_ener`) and share the backbone with a property branch.
+`nequip_ener` is `output_hidden_to_scalar` plus the stored DeePMD `e0`; it is
+not a second MLP on the property `0e` features, and it does not change
+`model.type: nequip` or the LAMMPS energy path. See
+[`examples/property/nequip/input_multitask.json`](examples/property/nequip/input_multitask.json).
+
 ### SevenNet property descriptor
 
 SevenNet is wired as a **property descriptor**, not as a standalone energy model
@@ -519,6 +526,13 @@ checkpoint `chemical_species` list exactly, including unused elements.
 ```
 
 An example input is under [examples/property/sevennet](examples/property/sevennet).
+
+The same descriptor can also keep the original SevenNet energy head as a
+DeePMD fitting (`sevennet_ener`) and share the backbone with a property
+branch. Last-layer `0e` features still go to `PropertyFittingNet`; the native
+readout, rescale, and per-element shift stay on `sevennet_ener`. This does not
+add a SevenNet LAMMPS energy model. See
+[`examples/property/sevennet/input_multitask.json`](examples/property/sevennet/input_multitask.json).
 
 ## DPRc support
 

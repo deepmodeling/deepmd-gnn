@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Original MACE energy head as a DeePMD fitting."""
+"""Original SevenNet energy head as a DeePMD fitting."""
 
 from __future__ import annotations
 
 from copy import deepcopy
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -18,47 +17,58 @@ from deepmd.pt.utils import env
 from deepmd.pt.utils.utils import to_numpy_array, to_torch_tensor
 from deepmd.utils.version import check_version_compatibility
 
-from deepmd_gnn.mace_checkpoint import (
-    MaceEnergyHead,
-    build_mace_energy_head,
-    inspect_native_mace_checkpoint,
-    load_native_mace_checkpoint,
+from deepmd_gnn.sevennet_checkpoint import (
+    build_sevennet_energy_modules,
+    energy_input_dim,
+    load_native_sevennet_energy_modules,
     persistable_checkpoint_config,
-    validate_mace_state_dict_load,
+    resolve_sevennet_checkpoint_path,
+    validate_sevennet_state_dict_load,
 )
 
 if TYPE_CHECKING:
+    from collections import OrderedDict
     from collections.abc import Callable
+    from pathlib import Path
 
     from deepmd.utils.path import DPPath
 
 
-def split_packed_layer_features(
-    packed: torch.Tensor,
-    layer_feature_dims: list[int],
-) -> list[torch.Tensor]:
-    """Split concatenated per-layer node features back into layer tensors."""
-    nf, nloc, width = packed.shape
-    expected = sum(layer_feature_dims)
-    if width != expected:
-        msg = (
-            "Packed MACE layer features have width "
-            f"{width}, expected {expected} from {layer_feature_dims}"
-        )
-        raise ValueError(msg)
-    layers: list[torch.Tensor] = []
-    offset = 0
-    for dim in layer_feature_dims:
-        layer = packed[:, :, offset : offset + dim].reshape(nf * nloc, dim)
-        layers.append(layer)
-        offset += dim
-    return layers
+class SevenNetEnergyHead(torch.nn.Module):
+    """Original SevenNet energy readout, rescale, and per-element shift."""
+
+    def __init__(self, modules: OrderedDict[str, torch.nn.Module]) -> None:
+        super().__init__()
+        self.layers = torch.nn.ModuleDict(modules)
+        self.layer_names = list(modules)
+        self.feature_dim = energy_input_dim(modules)
+
+    def native_shift(self) -> torch.nn.Parameter:
+        """Return the original energy shift parameter."""
+        rescale = self.layers["rescale_atomic_energy"]
+        return rescale.shift
+
+    def node_energy(
+        self,
+        features: torch.Tensor,
+        atype: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return per-atom energies from last-layer node features."""
+        source_dtype = next(self.parameters()).dtype
+        data: dict[str, torch.Tensor] = {
+            "x": features.to(source_dtype),
+            "atom_type": atype.reshape(-1).to(torch.int64),
+        }
+        for name in self.layer_names:
+            data = self.layers[name](data)
+        atomic_energy = data["atomic_energy"]
+        return atomic_energy.reshape(-1)
 
 
-@Fitting.register("mace_ener")
+@Fitting.register("sevennet_ener")
 @fitting_check_output
-class MaceEnergyFitting(Fitting):
-    """Wrap the native MACE energy readout rather than a new MLP on ``0e``."""
+class SevenNetEnergyFitting(Fitting):
+    """Wrap the native SevenNet energy readout rather than a new MLP on ``0e``."""
 
     def __init__(
         self,
@@ -74,13 +84,13 @@ class MaceEnergyFitting(Fitting):
         super().__init__()
         del kwargs
         if type_map is None:
-            msg = "mace_ener fitting requires the model-level type_map"
+            msg = "sevennet_ener fitting requires the model-level type_map"
             raise ValueError(msg)
         if ntypes != len(type_map):
             msg = f"ntypes={ntypes} does not match type_map length {len(type_map)}"
             raise ValueError(msg)
         if not mixed_types:
-            msg = "mace_ener fitting requires mixed_types=True"
+            msg = "sevennet_ener fitting requires mixed_types=True"
             raise ValueError(msg)
 
         self.ntypes = int(ntypes)
@@ -93,39 +103,46 @@ class MaceEnergyFitting(Fitting):
         self.dim_case_embd = 0
         self.exclude_types: list[int] = []
         self.model_path: str | None = None
-        source_path = None if model_path is None else Path(model_path)
-        if source_path is not None and source_path.is_file():
-            model = load_native_mace_checkpoint(
-                source_path,
+        resolved = (
+            None if model_path is None else resolve_sevennet_checkpoint_path(model_path)
+        )
+        if resolved is not None:
+            modules, inferred = load_native_sevennet_energy_modules(
+                resolved,
                 device=str(env.DEVICE),
             )
-            inferred = inspect_native_mace_checkpoint(model)
             checkpoint_type_map = inferred["type_map"]
             if self.type_map != checkpoint_type_map:
                 msg = (
-                    "Model-level type_map must exactly match checkpoint atomic-number "
-                    f"ordering: expected {checkpoint_type_map}, got {self.type_map}"
+                    "Model-level type_map must exactly match checkpoint "
+                    "chemical_species ordering: "
+                    f"expected {checkpoint_type_map}, got {self.type_map}"
                 )
                 raise ValueError(msg)
             self.config = persistable_checkpoint_config(inferred)
             if config is not None:
                 config.clear()
                 config.update(self.config)
-            self.model_path = str(source_path)
-            self.head = MaceEnergyHead(model)
+            self.model_path = str(model_path)
+            self.head = SevenNetEnergyHead(modules)
         elif config is not None:
             self.config = persistable_checkpoint_config(config)
             checkpoint_type_map = self.config.get("type_map", self.type_map)
             if self.type_map != checkpoint_type_map:
                 msg = (
-                    "Serialized mace_ener type_map mismatch: "
+                    "Serialized sevennet_ener type_map mismatch: "
                     f"expected {checkpoint_type_map}, got {self.type_map}"
                 )
                 raise ValueError(msg)
             self.model_path = None
-            self.head = build_mace_energy_head(self.config)
-        elif source_path is not None:
-            msg = f"MACE checkpoint not found: {model_path}"
+            self.head = SevenNetEnergyHead(
+                build_sevennet_energy_modules(
+                    self.config,
+                    device=str(env.DEVICE),
+                ),
+            )
+        elif model_path is not None:
+            msg = f"SevenNet checkpoint not found: {model_path}"
             raise FileNotFoundError(msg)
         else:
             msg = (
@@ -152,17 +169,17 @@ class MaceEnergyFitting(Fitting):
         )
 
     def get_type_map(self) -> list[str]:
-        """Return checkpoint elements in atomic-number order."""
+        """Return checkpoint elements in chemical_species order."""
         return self.type_map
 
     def change_type_map(
         self,
         type_map: list[str],
-        model_with_new_type_stat: MaceEnergyFitting | None = None,
+        model_with_new_type_stat: SevenNetEnergyFitting | None = None,
     ) -> None:
         """Reject type-map changes and subsets."""
         del type_map, model_with_new_type_stat
-        msg = "mace_ener fitting does not support changing or subsetting type_map"
+        msg = "sevennet_ener fitting does not support changing or subsetting type_map"
         raise NotImplementedError(msg)
 
     def compute_input_stats(
@@ -171,7 +188,7 @@ class MaceEnergyFitting(Fitting):
         protection: float = 1e-2,
         stat_file_path: DPPath | None = None,
     ) -> None:
-        """Skip fitting-net statistics; MACE already stores e0 and scale/shift."""
+        """Skip fitting-net statistics; SevenNet already stores shift/scale."""
         del merged, protection, stat_file_path
 
     def compute_output_stats(
@@ -179,7 +196,7 @@ class MaceEnergyFitting(Fitting):
         merged: Callable[[], list[dict]] | list[dict] | None = None,
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
-        """Skip DeePMD energy bias; the original atomic_energies_fn is the bias."""
+        """Skip DeePMD energy bias; the original rescale shift is the bias."""
         del merged, kwargs
 
     def get_dim_fparam(self) -> int:
@@ -207,8 +224,8 @@ class MaceEnergyFitting(Fitting):
         del case_idx
 
     def native_atomic_energies(self) -> torch.Tensor:
-        """Return the original per-element vacuum energies."""
-        return self.head.atomic_energies_fn.atomic_energies
+        """Return the original per-element energy shift."""
+        return self.head.native_shift()
 
     def forward(
         self,
@@ -220,34 +237,22 @@ class MaceEnergyFitting(Fitting):
         fparam: torch.Tensor | None = None,
         aparam: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        """Apply the original MACE energy head to packed layer features."""
-        del descriptor, gr, fparam, aparam
-        if g2 is None or h2 is None:
-            msg = (
-                "mace_ener fitting requires packed layer features in g2 "
-                "and pair energy in h2"
-            )
+        """Apply the original SevenNet energy head to last-layer features."""
+        del descriptor, gr, h2, fparam, aparam
+        if g2 is None:
+            msg = "sevennet_ener fitting requires last-layer features in g2"
             raise ValueError(msg)
         nf, nloc = atype.shape
-        source_dtype = next(self.head.parameters()).dtype
-        node_attrs = torch.zeros(
-            (nf * nloc, self.ntypes),
-            dtype=source_dtype,
-            device=atype.device,
-        )
-        node_attrs.scatter_(
-            -1,
-            atype.to(torch.int64).reshape(-1, 1),
-            1,
-        )
-        layer_features = split_packed_layer_features(
-            g2.to(source_dtype),
-            self.head.layer_feature_dims,
-        )
+        width = g2.shape[-1]
+        if width != self.head.feature_dim:
+            msg = (
+                "Packed SevenNet last-layer features have width "
+                f"{width}, expected {self.head.feature_dim}"
+            )
+            raise ValueError(msg)
         atom_energy = self.head.node_energy(
-            node_attrs,
-            layer_features,
-            h2.to(source_dtype).reshape(nf * nloc),
+            g2.reshape(nf * nloc, width),
+            atype,
         )
         return {
             "energy": atom_energy.view(nf, nloc, 1).to(env.GLOBAL_PT_FLOAT_PRECISION),
@@ -260,7 +265,7 @@ class MaceEnergyFitting(Fitting):
         return {
             "@class": "Fitting",
             "@version": 1,
-            "type": "mace_ener",
+            "type": "sevennet_ener",
             "ntypes": self.ntypes,
             "dim_descrpt": self.dim_descrpt,
             "type_map": self.type_map,
@@ -275,35 +280,22 @@ class MaceEnergyFitting(Fitting):
         }
 
     @classmethod
-    def deserialize(cls, data: dict) -> MaceEnergyFitting:
-        """Restore a self-contained serialized MACE energy head."""
+    def deserialize(cls, data: dict) -> SevenNetEnergyFitting:
+        """Restore a self-contained serialized SevenNet energy head."""
         data = data.copy()
-        if data.pop("@class") != "Fitting" or data.pop("type") != "mace_ener":
-            msg = "data is not a serialized MaceEnergyFitting"
+        if data.pop("@class") != "Fitting" or data.pop("type") != "sevennet_ener":
+            msg = "data is not a serialized SevenNetEnergyFitting"
             raise ValueError(msg)
         check_version_compatibility(data.pop("@version"), 1, 1)
         variables = {
             name: to_torch_tensor(value)
             for name, value in data.pop("@variables").items()
         }
-        data.pop("layer_feature_dims", None)
         fitting = cls(**data)
-        current = fitting.head.state_dict()
-        aligned = {}
-        for name, tensor in variables.items():
-            target = current.get(name)
-            if (
-                target is not None
-                and target.shape != tensor.shape
-                and target.numel() == tensor.numel()
-            ):
-                aligned[name] = tensor.reshape(target.shape)
-            else:
-                aligned[name] = tensor
-        validate_mace_state_dict_load(
-            fitting.head.load_state_dict(aligned, strict=False),
+        validate_sevennet_state_dict_load(
+            fitting.head.load_state_dict(variables, strict=False),
         )
         return fitting
 
 
-__all__ = ["MaceEnergyFitting", "split_packed_layer_features"]
+__all__ = ["SevenNetEnergyFitting", "SevenNetEnergyHead"]

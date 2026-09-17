@@ -99,6 +99,94 @@ def mace_ener_fitting_args() -> Argument:
     )
 
 
+@fitting_args_plugin.register("nequip_ener")
+def nequip_ener_fitting_args() -> Argument:
+    """Arguments for the original NequIP energy head used as a DeePMD fitting."""
+    return Argument(
+        "nequip_ener",
+        dict,
+        [
+            Argument(
+                "model_file",
+                str,
+                optional=True,
+                doc=(
+                    "Path to a trusted torch.save artifact containing "
+                    "NequipModel.serialize() output. Required for "
+                    "initialization; saved DeePMD checkpoints restore from "
+                    "the persisted config."
+                ),
+            ),
+            Argument(
+                "config",
+                dict,
+                optional=True,
+                doc=(
+                    "Inferred NequIP backbone architecture persisted into the "
+                    "saved model definition so restoration does not reopen "
+                    "the source artifact."
+                ),
+            ),
+            Argument(
+                "trainable",
+                bool,
+                optional=True,
+                default=True,
+                doc="Whether to optimize the original NequIP energy head.",
+            ),
+        ],
+        doc=(
+            "PT-only fitting that keeps the pretrained NequIP "
+            "output_hidden_to_scalar readout and DeePMD e0. Forces come from "
+            "autograd through the shared NequIP descriptor."
+        ),
+    )
+
+
+@fitting_args_plugin.register("sevennet_ener")
+def sevennet_ener_fitting_args() -> Argument:
+    """Arguments for the original SevenNet energy head used as a DeePMD fitting."""
+    return Argument(
+        "sevennet_ener",
+        dict,
+        [
+            Argument(
+                "model_path",
+                str,
+                optional=True,
+                doc=(
+                    "Path to a trusted native SevenNet checkpoint, or a "
+                    "single-task pretrained keyword such as 7net-0. Required "
+                    "for initialization; saved DeePMD checkpoints restore from "
+                    "the persisted config."
+                ),
+            ),
+            Argument(
+                "config",
+                dict,
+                optional=True,
+                doc=(
+                    "Inferred SevenNet backbone architecture persisted into the "
+                    "saved model definition so restoration does not reopen "
+                    "the native checkpoint."
+                ),
+            ),
+            Argument(
+                "trainable",
+                bool,
+                optional=True,
+                default=True,
+                doc="Whether to optimize the original SevenNet energy head.",
+            ),
+        ],
+        doc=(
+            "PT-only fitting that keeps the pretrained SevenNet energy "
+            "readout and species-wise rescale. Forces come from autograd "
+            "through the shared SevenNet descriptor."
+        ),
+    )
+
+
 @descrpt_args_plugin.register("sevennet")
 def sevennet_descriptor_args() -> Argument:
     """Arguments for a pretrained SevenNet property descriptor."""

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
@@ -24,6 +25,12 @@ ENERGY_MODULE_NAMES = (
     "rescale_atomic_energy",
     "reduce_total_enegy",
     "force_output",
+)
+ENERGY_HEAD_MODULE_NAMES = (
+    "reduce_input_to_hidden",
+    "reduce_hidden_to_energy",
+    "readout_FCN",
+    "rescale_atomic_energy",
 )
 
 _INT_KEY_DICTS = ("_type_map",)
@@ -61,6 +68,8 @@ def json_safe_value(value: Any) -> Any:  # noqa: ANN401, PLR0911
     if isinstance(value, (np.bool_, bool)):
         return bool(value)
     if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, torch.device):
         return str(value)
     return value
 
@@ -137,6 +146,43 @@ def _dtype_from_name(name: str) -> torch.dtype:
     if name == "float64":
         return torch.float64
     return torch.float32
+
+
+def extract_energy_head_modules(model: torch.nn.Module) -> OrderedDict[str, Any]:
+    """Copy native energy-readout modules before the backbone is stripped."""
+    modules: OrderedDict[str, Any] = OrderedDict()
+    for name in ENERGY_HEAD_MODULE_NAMES:
+        module = model._modules.get(name)  # noqa: SLF001
+        if module is not None:
+            modules[name] = module
+    if "rescale_atomic_energy" not in modules:
+        msg = "SevenNet energy head is missing rescale_atomic_energy"
+        raise ValueError(msg)
+    has_linear = (
+        "reduce_input_to_hidden" in modules and "reduce_hidden_to_energy" in modules
+    )
+    if not has_linear and "readout_FCN" not in modules:
+        msg = (
+            "SevenNet energy head needs reduce_input_to_hidden/"
+            "reduce_hidden_to_energy or readout_FCN"
+        )
+        raise ValueError(msg)
+    return modules
+
+
+def energy_input_dim(modules: dict[str, Any]) -> int:
+    """Return last-layer feature width consumed by the original energy head."""
+    for name in ("reduce_input_to_hidden", "readout_FCN"):
+        module = modules.get(name)
+        if module is None:
+            continue
+        irreps_in = getattr(module, "irreps_in", None)
+        if irreps_in is None:
+            msg = f"SevenNet energy module {name} does not expose irreps_in"
+            raise ValueError(msg)
+        return int(o3.Irreps(irreps_in).dim)
+    msg = "SevenNet energy head does not declare an input irrep width"
+    raise ValueError(msg)
 
 
 def prepare_feature_backbone(model: AtomGraphSequential) -> AtomGraphSequential:
@@ -263,6 +309,55 @@ def load_native_sevennet_feature_backbone(
         model = checkpoint.build_model()
     model = prepare_feature_backbone(model).to(device)
     return model, persistable
+
+
+def _full_sevennet_model_from_config(
+    config: dict[str, Any],
+) -> tuple[Any, dict[str, Any]]:
+    """Rebuild a complete native SevenNet model from persisted metadata."""
+    from sevenn.model_build import build_E3_equivariant_model  # noqa: PLC0415
+
+    persistable = persistable_checkpoint_config(config)
+    sevenn_config = restore_sevenn_config(persistable["sevenn_config"])
+    reject_unsupported_sevennet(sevenn_config)
+    dtype = _dtype_from_name(persistable["source_dtype"])
+    with temporary_default_dtype(dtype):
+        model = build_E3_equivariant_model(sevenn_config)
+    return model, persistable
+
+
+def load_native_sevennet_energy_modules(
+    model_path: str | Path,
+    *,
+    device: str | torch.device,
+) -> tuple[OrderedDict[str, Any], dict[str, Any]]:
+    """Load the original SevenNet energy readout from a trusted checkpoint."""
+    from sevenn.util import load_checkpoint  # noqa: PLC0415
+
+    payload = _load_raw_sevennet_payload(model_path)
+    reject_unsupported_sevennet(payload.get("config") or {})
+    checkpoint = load_checkpoint(str(model_path))
+    reject_unsupported_sevennet(checkpoint.config)
+    persistable = persistable_checkpoint_config(checkpoint.config)
+    dtype = _infer_state_dtype(checkpoint.model_state_dict)
+    persistable["source_dtype"] = "float64" if dtype == torch.float64 else "float32"
+    with temporary_default_dtype(dtype):
+        model = checkpoint.build_model()
+    modules = extract_energy_head_modules(model)
+    return OrderedDict((name, module.to(device)) for name, module in modules.items()), (
+        persistable
+    )
+
+
+def build_sevennet_energy_modules(
+    config: dict[str, Any],
+    *,
+    device: str | torch.device,
+) -> OrderedDict[str, Any]:
+    """Rebuild the original SevenNet energy readout from persisted metadata."""
+    model, _persistable = _full_sevennet_model_from_config(config)
+    modules = extract_energy_head_modules(model)
+    return OrderedDict((name, module.to(device)) for name, module in modules.items())
 
 
 def validate_sevennet_state_dict_load(load_result: object) -> None:

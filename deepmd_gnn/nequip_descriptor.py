@@ -44,7 +44,7 @@ _ARCHITECTURE_DEFAULTS = {
 }
 
 
-def _load_serialized_nequip(path: str) -> dict[str, Any]:
+def _load_serialized_nequip(path: str | Path) -> dict[str, Any]:
     """Load a trusted ``NequipModel.serialize()`` payload."""
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
     if not isinstance(payload, dict):

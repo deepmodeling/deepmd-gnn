@@ -345,7 +345,7 @@ class SevenNetDescriptor(BaseDescriptor, torch.nn.Module):
         return (
             invariant.to(env.GLOBAL_PT_FLOAT_PRECISION),
             None,
-            None,
+            features.to(env.GLOBAL_PT_FLOAT_PRECISION),
             None,
             None,
         )

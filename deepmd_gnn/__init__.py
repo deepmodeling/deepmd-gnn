@@ -8,7 +8,9 @@ from .argcheck import (
     mace_ener_fitting_args,
     mace_model_args,
     nequip_descriptor_args,
+    nequip_ener_fitting_args,
     sevennet_descriptor_args,
+    sevennet_ener_fitting_args,
 )
 
 __email__ = "jinzhe.zeng@ustc.edu.cn"
@@ -19,7 +21,9 @@ __all__ = [
     "mace_ener_fitting_args",
     "mace_model_args",
     "nequip_descriptor_args",
+    "nequip_ener_fitting_args",
     "sevennet_descriptor_args",
+    "sevennet_ener_fitting_args",
 ]
 
 # make compatible with mace & e3nn & pytorch 2.6

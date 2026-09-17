@@ -8,6 +8,8 @@ import json
 import sys
 from typing import Any
 
+_GNN_ENERGY_FITTING_TYPES = ("mace_ener", "nequip_ener", "sevennet_ener")
+
 
 def load() -> None:
     """Entry point placeholder; importing this module registers plugins."""
@@ -23,33 +25,85 @@ _MACE_ENER_STANDARD_PATCHED = False
 _MACE_ENER_WRAPPER_PATCHED = False
 
 
-def _persist_one_mace_model(model: Any, model_params: dict[str, Any]) -> None:  # noqa: ANN401
-    """Write inferred MACE constructor configs into checkpoint model parameters."""
+def _gnn_energy_fitting_classes() -> tuple[type, ...]:
+    """Return installed original-energy fitting classes."""
+    from deepmd_gnn.mace_ener import MaceEnergyFitting  # noqa: PLC0415
+    from deepmd_gnn.nequip_ener import NequipEnergyFitting  # noqa: PLC0415
+
+    classes: list[type] = [MaceEnergyFitting, NequipEnergyFitting]
+    with contextlib.suppress(ImportError):
+        from deepmd_gnn.sevennet_ener import SevenNetEnergyFitting  # noqa: PLC0415
+
+        classes.append(SevenNetEnergyFitting)
+    return tuple(classes)
+
+
+def _persist_one_gnn_model(model: Any, model_params: dict[str, Any]) -> None:  # noqa: ANN401
+    """Write inferred GNN constructor configs into checkpoint model parameters."""
     from deepmd_gnn.mace_checkpoint import (  # noqa: PLC0415
-        persistable_checkpoint_config,
+        persistable_checkpoint_config as persistable_mace_config,
     )
     from deepmd_gnn.mace_descriptor import MaceDescriptor  # noqa: PLC0415
     from deepmd_gnn.mace_ener import MaceEnergyFitting  # noqa: PLC0415
+    from deepmd_gnn.nequip_descriptor import NequipDescriptor  # noqa: PLC0415
+    from deepmd_gnn.nequip_ener import (  # noqa: PLC0415
+        NequipEnergyFitting,
+        persistable_nequip_config,
+    )
 
     get_descriptor = getattr(model, "get_descriptor", None)
     get_fitting = getattr(model, "get_fitting_net", None)
     descriptor = get_descriptor() if callable(get_descriptor) else None
     fitting = get_fitting() if callable(get_fitting) else None
     if isinstance(descriptor, MaceDescriptor):
-        model_params.setdefault("descriptor", {})["config"] = (
-            persistable_checkpoint_config(descriptor.config)
+        model_params.setdefault("descriptor", {})["config"] = persistable_mace_config(
+            descriptor.config,
         )
+    elif isinstance(descriptor, NequipDescriptor):
+        model_params.setdefault("descriptor", {})["config"] = persistable_nequip_config(
+            descriptor.params,
+        )
+    else:
+        with contextlib.suppress(ImportError):
+            from deepmd_gnn.sevennet_checkpoint import (  # noqa: PLC0415
+                persistable_checkpoint_config as persistable_sevennet_config,
+            )
+            from deepmd_gnn.sevennet_descriptor import (  # noqa: PLC0415
+                SevenNetDescriptor,
+            )
+
+            if isinstance(descriptor, SevenNetDescriptor):
+                model_params.setdefault("descriptor", {})["config"] = (
+                    persistable_sevennet_config(descriptor.config)
+                )
     if isinstance(fitting, MaceEnergyFitting):
-        model_params.setdefault("fitting_net", {})["config"] = (
-            persistable_checkpoint_config(fitting.config)
+        model_params.setdefault("fitting_net", {})["config"] = persistable_mace_config(
+            fitting.config,
         )
+    elif isinstance(fitting, NequipEnergyFitting):
+        model_params.setdefault("fitting_net", {})["config"] = (
+            persistable_nequip_config(
+                fitting.config,
+            )
+        )
+    else:
+        with contextlib.suppress(ImportError):
+            from deepmd_gnn.sevennet_checkpoint import (  # noqa: PLC0415
+                persistable_checkpoint_config as persistable_sevennet_config,
+            )
+            from deepmd_gnn.sevennet_ener import SevenNetEnergyFitting  # noqa: PLC0415
+
+            if isinstance(fitting, SevenNetEnergyFitting):
+                model_params.setdefault("fitting_net", {})["config"] = (
+                    persistable_sevennet_config(fitting.config)
+                )
 
 
 def _persist_mace_runtime_configs(
     model: Any,  # noqa: ANN401
     model_params: dict[str, Any] | None,
 ) -> None:
-    """Copy live MACE configs into the dict DeePMD stores on the wrapper."""
+    """Copy live GNN configs into the dict DeePMD stores on the wrapper."""
     if not model_params:
         return
     named_models = (
@@ -66,11 +120,33 @@ def _persist_mace_runtime_configs(
     live = model
     if named_models is not None:
         live = named_models.get("Default") or next(iter(named_models.values()), model)
-    _persist_one_mace_model(live, model_params)
+    _persist_one_gnn_model(live, model_params)
+
+
+def _copy_native_atomic_energies(fitting: Any, energy_bias: Any) -> None:  # noqa: ANN401
+    """Write set-by-statistic energies onto the original GNN e0 / shift."""
+    import torch  # noqa: PLC0415
+
+    energies = fitting.native_atomic_energies()
+    bias = energy_bias.reshape(-1).to(dtype=energies.dtype, device=energies.device)
+    if bias.numel() == energies.numel():
+        with torch.no_grad():
+            energies.copy_(bias.reshape(energies.shape))
+        return
+    if energies.numel() == 1:
+        with torch.no_grad():
+            energies.copy_(bias.mean().reshape(energies.shape))
+        return
+    msg = (
+        "Native GNN energy shift shape "
+        f"{tuple(energies.shape)} is incompatible with statistic bias "
+        f"numel={bias.numel()}"
+    )
+    raise ValueError(msg)
 
 
 def _install_mace_ener_energy_atomic_model() -> None:
-    """Let EnergyModel accept the original MACE head and skip extra e0 bias."""
+    """Let EnergyModel accept original GNN energy heads and skip extra e0 bias."""
     global _MACE_ENER_ATOMIC_PATCHED  # noqa: PLW0603
     from deepmd.pt.model.atomic_model.dp_atomic_model import (  # noqa: PLC0415
         DPAtomicModel,
@@ -79,11 +155,10 @@ def _install_mace_ener_energy_atomic_model() -> None:
         DPEnergyAtomicModel,
     )
 
-    from deepmd_gnn.mace_ener import MaceEnergyFitting  # noqa: PLC0415
-
     if _MACE_ENER_ATOMIC_PATCHED:
         return
 
+    energy_fittings = _gnn_energy_fitting_classes()
     original_init = DPEnergyAtomicModel.__init__
 
     def init_with_mace_ener(
@@ -93,7 +168,7 @@ def _install_mace_ener_energy_atomic_model() -> None:
         type_map: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
-        if isinstance(fitting, MaceEnergyFitting):
+        if isinstance(fitting, energy_fittings):
             DPAtomicModel.__init__(self, descriptor, fitting, type_map, **kwargs)
             return
         original_init(self, descriptor, fitting, type_map, **kwargs)
@@ -105,8 +180,8 @@ def _install_mace_ener_energy_atomic_model() -> None:
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
-        """Keep pretrained MACE e0; do not LS-fit a second vacuum energy."""
-        if isinstance(self.fitting_net, MaceEnergyFitting):
+        """Keep pretrained GNN e0; do not LS-fit a second vacuum energy."""
+        if isinstance(self.fitting_net, energy_fittings):
             return
         original_out_stat(self, *args, **kwargs)
 
@@ -120,10 +195,7 @@ def _install_mace_ener_energy_atomic_model() -> None:
     ) -> None:
         """Finetune residual goes to ``out_bias``; set-by-statistic replaces e0."""
         if (
-            not isinstance(
-                self.fitting_net,
-                MaceEnergyFitting,
-            )
+            not isinstance(self.fitting_net, energy_fittings)
             or bias_adjust_mode == "change-by-statistic"
         ):
             original_change(
@@ -150,15 +222,7 @@ def _install_mace_ener_energy_atomic_model() -> None:
             )
             if "energy" not in bias_out:
                 return
-            energies = self.fitting_net.head.atomic_energies_fn.atomic_energies
-            energies.copy_(
-                bias_out["energy"]
-                .reshape(energies.shape)
-                .to(
-                    dtype=energies.dtype,
-                    device=energies.device,
-                ),
-            )
+            _copy_native_atomic_energies(self.fitting_net, bias_out["energy"])
 
     DPEnergyAtomicModel.__init__ = init_with_mace_ener  # type: ignore[method-assign]
     DPEnergyAtomicModel.compute_or_load_out_stat = (  # type: ignore[method-assign]
@@ -169,7 +233,7 @@ def _install_mace_ener_energy_atomic_model() -> None:
 
 
 def _install_mace_ener_standard_model() -> None:
-    """Route ``fitting_net.type=mace_ener`` through DeePMD's EnergyModel."""
+    """Route original GNN energy fittings through DeePMD's EnergyModel."""
     global _MACE_ENER_STANDARD_PATCHED  # noqa: PLW0603
     import deepmd.pt.model.model as model_mod  # noqa: PLC0415
 
@@ -179,7 +243,7 @@ def _install_mace_ener_standard_model() -> None:
 
     def get_standard_model_with_mace_ener(model_params: dict[str, Any]) -> Any:  # noqa: ANN401
         fitting_type = (model_params.get("fitting_net") or {}).get("type", "ener")
-        if fitting_type != "mace_ener":
+        if fitting_type not in _GNN_ENERGY_FITTING_TYPES:
             return original(model_params)
         model_params_old = model_params
         model_params = copy.deepcopy(model_params)
@@ -262,10 +326,13 @@ def _register() -> None:
     )
 
     import deepmd_gnn.mace_descriptor  # noqa: PLC0415
+    import deepmd_gnn.mace_ener  # noqa: PLC0415
     import deepmd_gnn.nequip_descriptor  # noqa: PLC0415
+    import deepmd_gnn.nequip_ener  # noqa: PLC0415
 
     with contextlib.suppress(ImportError):
-        import deepmd_gnn.sevennet_descriptor  # noqa: F401, PLC0415
+        import deepmd_gnn.sevennet_descriptor  # noqa: PLC0415
+        import deepmd_gnn.sevennet_ener  # noqa: F401, PLC0415
     from deepmd_gnn.mace import MaceModel  # noqa: PLC0415
     from deepmd_gnn.nequip import NequipModel  # noqa: PLC0415
 
