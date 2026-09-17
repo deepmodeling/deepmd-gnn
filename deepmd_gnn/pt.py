@@ -123,8 +123,13 @@ def _persist_mace_runtime_configs(
     _persist_one_gnn_model(live, model_params)
 
 
-def _copy_native_atomic_energies(fitting: Any, energy_bias: Any) -> None:  # noqa: ANN401
-    """Write set-by-statistic energies onto the original GNN e0 / shift."""
+def _copy_native_atomic_energies(fitting: Any, energy_bias: Any) -> bool:  # noqa: ANN401
+    """Copy set-by-statistic energies onto native e0 when shapes match.
+
+    Returns True when the original GNN shift was replaced. A scalar native
+    shift cannot store type-resolved statistics; the caller then writes the
+    correction onto DeePMD ``out_bias`` instead of averaging types together.
+    """
     import torch  # noqa: PLC0415
 
     energies = fitting.native_atomic_energies()
@@ -132,17 +137,49 @@ def _copy_native_atomic_energies(fitting: Any, energy_bias: Any) -> None:  # noq
     if bias.numel() == energies.numel():
         with torch.no_grad():
             energies.copy_(bias.reshape(energies.shape))
-        return
+        return True
     if energies.numel() == 1:
-        with torch.no_grad():
-            energies.copy_(bias.mean().reshape(energies.shape))
-        return
+        return False
     msg = (
         "Native GNN energy shift shape "
         f"{tuple(energies.shape)} is incompatible with statistic bias "
         f"numel={bias.numel()}"
     )
     raise ValueError(msg)
+
+
+def _store_type_resolved_shift_correction(
+    atomic_model: Any,  # noqa: ANN401
+    fitting: Any,  # noqa: ANN401
+    energy_bias: Any,  # noqa: ANN401
+    energy_std: Any,  # noqa: ANN401
+) -> None:
+    """Keep a scalar native shift and put per-type statistics on ``out_bias``."""
+    import torch  # noqa: PLC0415
+
+    native = fitting.native_atomic_energies()
+    ntypes = atomic_model.get_ntypes()
+    typed = energy_bias.reshape(ntypes, -1).to(
+        dtype=atomic_model.out_bias.dtype,
+        device=atomic_model.out_bias.device,
+    )
+    correction = typed - native.reshape(()).to(
+        dtype=typed.dtype,
+        device=typed.device,
+    )
+    if energy_std is None:
+        std = torch.ones_like(correction)
+    else:
+        std = energy_std.reshape(-1).to(dtype=typed.dtype, device=typed.device)
+        if std.numel() != correction.numel():
+            std = torch.ones_like(correction)
+        else:
+            std = std.reshape_as(correction)
+    atomic_model._store_out_stat(  # noqa: SLF001
+        {"energy": correction},
+        {"energy": std},
+        add=False,
+    )
 
 
 def _install_mace_ener_energy_atomic_model() -> None:
@@ -193,7 +230,11 @@ def _install_mace_ener_energy_atomic_model() -> None:
         stat_file_path: Any = None,  # noqa: ANN401
         bias_adjust_mode: str = "change-by-statistic",
     ) -> None:
-        """Finetune residual goes to ``out_bias``; set-by-statistic replaces e0."""
+        """Finetune residual goes to ``out_bias``; set-by-statistic replaces e0.
+
+        A scalar native shift is kept; type-resolved statistics go to
+        ``out_bias`` rather than being averaged onto that one parameter.
+        """
         if (
             not isinstance(self.fitting_net, energy_fittings)
             or bias_adjust_mode == "change-by-statistic"
@@ -222,7 +263,14 @@ def _install_mace_ener_energy_atomic_model() -> None:
             )
             if "energy" not in bias_out:
                 return
-            _copy_native_atomic_energies(self.fitting_net, bias_out["energy"])
+            if _copy_native_atomic_energies(self.fitting_net, bias_out["energy"]):
+                return
+            _store_type_resolved_shift_correction(
+                self,
+                self.fitting_net,
+                bias_out["energy"],
+                _std.get("energy") if isinstance(_std, dict) else None,
+            )
 
     DPEnergyAtomicModel.__init__ = init_with_mace_ener  # type: ignore[method-assign]
     DPEnergyAtomicModel.compute_or_load_out_stat = (  # type: ignore[method-assign]

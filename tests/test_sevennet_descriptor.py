@@ -69,8 +69,18 @@ def _tiny_sevenn_config() -> dict:
     return config
 
 
-def _write_sevennet_checkpoint(path: Path, *, use_modality: bool = False) -> Path:
+def _write_sevennet_checkpoint(
+    path: Path,
+    *,
+    use_modality: bool = False,
+    shift: float | list[float] | None = None,
+    scale: float | list[float] | None = None,
+) -> Path:
     config = _tiny_sevenn_config()
+    if shift is not None:
+        config[KEY.SHIFT] = shift
+    if scale is not None:
+        config[KEY.SCALE] = scale
     model = build_E3_equivariant_model(config)
     if use_modality:
         config["use_modality"] = True

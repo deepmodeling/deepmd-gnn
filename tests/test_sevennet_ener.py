@@ -425,6 +425,53 @@ def test_out_bias_and_change_bias(sevennet_checkpoint: Path) -> None:
     )
 
 
+def test_set_by_statistic_scalar_shift_uses_out_bias(
+    tmp_path: Path,
+) -> None:
+    """Scalar SevenNet shift stays put; type-resolved stats go to out_bias."""
+    checkpoint = _write_sevennet_checkpoint(
+        tmp_path / "scalar_shift.pth",
+        shift=1.5,
+        scale=1.0,
+    )
+    model = _energy_model(checkpoint)
+    native = model.get_fitting_net().native_atomic_energies()
+    assert native.numel() == 1
+    shift_before = native.detach().clone()
+    coord = torch.tensor(
+        [[[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [0.0, 1.1, 0.0]]],
+        dtype=torch.float64,
+        device=env.DEVICE,
+    )
+    box = (torch.eye(3, dtype=torch.float64, device=env.DEVICE) * 6.0).reshape(1, 9)
+
+    def _pure(element: int, energy_per_atom: float) -> dict[str, torch.Tensor]:
+        atype = torch.full((1, 3), element, dtype=torch.int64, device=env.DEVICE)
+        energy = torch.tensor(
+            [[3.0 * energy_per_atom]],
+            dtype=torch.float64,
+            device=env.DEVICE,
+        )
+        return _energy_sample(coord, atype, box, energy)
+
+    model.change_out_bias(
+        [_pure(0, 2.0), _pure(1, 5.0)],
+        bias_adjust_mode="set-by-statistic",
+    )
+    torch.testing.assert_close(
+        model.get_fitting_net().native_atomic_energies(),
+        shift_before,
+    )
+    out_bias = model.get_out_bias().reshape(-1)[:2]
+    expected = torch.tensor(
+        [2.0, 5.0],
+        dtype=out_bias.dtype,
+        device=out_bias.device,
+    ) - shift_before.to(dtype=out_bias.dtype, device=out_bias.device)
+    torch.testing.assert_close(out_bias, expected, rtol=1e-5, atol=1e-5)
+    assert not torch.allclose(out_bias[0], out_bias[1])
+
+
 def test_sevennet_ener_rejects_invalid_construction(sevennet_checkpoint: Path) -> None:
     """Constructor guards keep the original head aligned with the descriptor."""
     with pytest.raises(ValueError, match="type_map"):
