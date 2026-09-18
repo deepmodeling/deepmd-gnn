@@ -1,0 +1,3 @@
+# MatterSim pulls e3nn>=0.5 via M3GNet encodings. Keep this session off
+# MACE's e3nn==0.4.4 pin.
+e3nn>=0.5

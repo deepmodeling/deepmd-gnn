@@ -12,6 +12,7 @@ from deepmd_gnn.argcheck import (  # noqa: F401
     mace_descriptor_args,
     mace_ener_fitting_args,
     mace_model_args,
+    mattersim_descriptor_args,
     nequip_descriptor_args,
     sevennet_descriptor_args,
 )
@@ -25,6 +26,7 @@ examples = (
     example_path / "dprc" / "nequip" / "input.json",
     example_path / "property" / "mace" / "input.json",
     example_path / "property" / "sevennet" / "input.json",
+    example_path / "property" / "mattersim" / "input.json",
 )
 
 multitask_examples = (example_path / "property" / "mace" / "input_multitask.json",)

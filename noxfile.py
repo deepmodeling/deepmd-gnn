@@ -10,6 +10,7 @@ nox.options.sessions = ["tests"]
 
 UV_OVERRIDES = "requirements-overrides.txt"
 SEVENNET_OVERRIDES = "requirements-sevennet-overrides.txt"
+MATTERSIM_OVERRIDES = "requirements-mattersim-overrides.txt"
 UV_TORCH_BACKEND = os.environ.get("UV_TORCH_BACKEND", "cpu")
 
 
@@ -62,6 +63,37 @@ def sevennet(session: nox.Session) -> None:
     session.run(
         "pytest",
         "tests/test_sevennet_descriptor.py",
+        "-m",
+        "not slow",
+        "--cov",
+        "--cov-config",
+        "pyproject.toml",
+        "--cov-report",
+        "term",
+        "--cov-report",
+        "xml",
+    )
+
+
+@nox.session
+def mattersim(session: nox.Session) -> None:
+    """Run MatterSim descriptor tests without MACE's e3nn pin."""
+    # MatterSim's full extra pulls pymatgen, phonopy, torch_geometric, Azure,
+    # and wandb. The property descriptor only needs the M3GNet modules.
+    session.install("mattersim", "--no-deps")
+    session.install(
+        "numpy",
+        "deepmd-kit[torch]>=3.2.0b0",
+        "opt_einsum_fx",
+        "-e.[test]",
+        "--overrides",
+        MATTERSIM_OVERRIDES,
+        "--torch-backend",
+        UV_TORCH_BACKEND,
+    )
+    session.run(
+        "pytest",
+        "tests/test_mattersim_descriptor.py",
         "-m",
         "not slow",
         "--cov",

@@ -99,6 +99,56 @@ def mace_ener_fitting_args() -> Argument:
     )
 
 
+@descrpt_args_plugin.register("mattersim")
+def mattersim_descriptor_args() -> Argument:
+    """Arguments for a pretrained MatterSim M3GNet property descriptor."""
+    return Argument(
+        "mattersim",
+        dict,
+        [
+            Argument(
+                "sel",
+                int,
+                optional=False,
+                doc="Explicit mixed-type DeePMD neighbor-list capacity.",
+            ),
+            Argument(
+                "model_path",
+                str,
+                optional=True,
+                doc=(
+                    "Path to a trusted native MatterSim M3GNet checkpoint, or a "
+                    "pretrained keyword such as mattersim-v1.0.0-1m. Required "
+                    "for initialization; saved DeePMD checkpoints restore from "
+                    "the persisted config."
+                ),
+            ),
+            Argument(
+                "config",
+                dict,
+                optional=True,
+                doc=(
+                    "Inferred MatterSim backbone architecture persisted into the "
+                    "saved model definition so restoration does not reopen "
+                    "the native checkpoint."
+                ),
+            ),
+            Argument(
+                "trainable",
+                bool,
+                optional=True,
+                default=True,
+                doc="Whether to optimize the pretrained MatterSim backbone.",
+            ),
+        ],
+        doc=(
+            "PT-only invariant descriptor from last-layer MatterSim-v1 M3GNet "
+            "atom_attr. The original GatedMLP energy readout is dropped. "
+            "Graphormer checkpoints and LAMMPS are unsupported."
+        ),
+    )
+
+
 @descrpt_args_plugin.register("sevennet")
 def sevennet_descriptor_args() -> Argument:
     """Arguments for a pretrained SevenNet property descriptor."""
