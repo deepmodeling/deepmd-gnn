@@ -706,6 +706,51 @@ def test_get_model_restores_without_source_checkpoint(
     )
 
 
+def test_wrapper_restore_ignores_replaced_native_pickle(
+    mattersim_checkpoint: Path,
+    tmp_path: Path,
+) -> None:
+    """ModelWrapper checkpoints restore from config even if the source file remains."""
+    from deepmd.pt.train.wrapper import ModelWrapper  # noqa: PLC0415
+
+    model_params = {
+        "type": "standard",
+        "type_map": ["H", "O"],
+        "descriptor": {
+            "type": "mattersim",
+            "model_path": str(mattersim_checkpoint),
+            "sel": 16,
+        },
+        "fitting_net": {
+            "type": "property",
+            "property_name": "band_gap",
+            "task_dim": 1,
+            "neuron": [8],
+            "precision": "float64",
+        },
+    }
+    original = get_model(model_params)
+    coord = torch.tensor(
+        [[[0.0, 0.0, 0.0], [0.9, 0.1, 0.0], [-0.2, 1.0, 0.3]]],
+        dtype=torch.float64,
+        device=env.DEVICE,
+    ).reshape(1, -1)
+    atype = torch.tensor([[1, 0, 0]], dtype=torch.int64, device=env.DEVICE)
+    before = original(coord, atype)["band_gap"]
+    wrapper = ModelWrapper(original, model_params=model_params)
+    extra_params = wrapper.state_dict()["_extra_state"]["model_params"]
+    assert extra_params["descriptor"]["config"]["type_map"] == ["H", "O"]
+    assert extra_params["descriptor"]["model_path"] is None
+    saved = tmp_path / "model.ckpt.pt"
+    torch.save({"model": wrapper.state_dict()}, saved)
+    mattersim_checkpoint.write_bytes(b"not a mattersim checkpoint")
+    from deepmd.pt.infer.inference import Tester  # noqa: PLC0415
+
+    tester = Tester(str(saved))
+    prediction, _, _ = tester.wrapper(coord, atype)
+    torch.testing.assert_close(prediction["band_gap"], before)
+
+
 def test_checkpoint_feature_parity_and_serialization_roundtrip(
     mattersim_checkpoint: Path,
 ) -> None:
@@ -827,6 +872,7 @@ def test_dp_property_training_smoke(
         weights_only=False,
     )["model"]["_extra_state"]["model_params"]
     assert extra_params["descriptor"]["config"]["type_map"] == ["H", "O"]
+    assert extra_params["descriptor"]["model_path"] is None
     hidden_source = mattersim_checkpoint.with_name("hidden_source.pth")
     mattersim_checkpoint.rename(hidden_source)
     from deepmd.pt.infer.inference import Tester  # noqa: PLC0415

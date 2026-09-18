@@ -44,9 +44,10 @@ def _persist_one_mace_model(model: Any, model_params: dict[str, Any]) -> None:  
             descriptor.config,
         )
     if isinstance(descriptor, MatterSimDescriptor):
-        model_params.setdefault("descriptor", {})["config"] = (
-            persistable_mattersim_config(descriptor.config)
-        )
+        descriptor_params = model_params.setdefault("descriptor", {})
+        descriptor_params["config"] = persistable_mattersim_config(descriptor.config)
+        # Native pickle is only for first construction; restore must not reopen it.
+        descriptor_params["model_path"] = None
     if isinstance(fitting, MaceEnergyFitting):
         model_params.setdefault("fitting_net", {})["config"] = persistable_mace_config(
             fitting.config,
