@@ -26,23 +26,37 @@ _MACE_ENER_WRAPPER_PATCHED = False
 def _persist_one_mace_model(model: Any, model_params: dict[str, Any]) -> None:  # noqa: ANN401
     """Write inferred MACE constructor configs into checkpoint model parameters."""
     from deepmd_gnn.mace_checkpoint import (  # noqa: PLC0415
-        persistable_checkpoint_config,
+        persistable_checkpoint_config as persistable_mace_config,
     )
     from deepmd_gnn.mace_descriptor import MaceDescriptor  # noqa: PLC0415
     from deepmd_gnn.mace_ener import MaceEnergyFitting  # noqa: PLC0415
+    from deepmd_gnn.mattersim_checkpoint import (  # noqa: PLC0415
+        persistable_checkpoint_config as persistable_mattersim_config,
+    )
+    from deepmd_gnn.mattersim_descriptor import MatterSimDescriptor  # noqa: PLC0415
+    from deepmd_gnn.mattersim_ener import MatterSimEnergyFitting  # noqa: PLC0415
 
     get_descriptor = getattr(model, "get_descriptor", None)
     get_fitting = getattr(model, "get_fitting_net", None)
     descriptor = get_descriptor() if callable(get_descriptor) else None
     fitting = get_fitting() if callable(get_fitting) else None
     if isinstance(descriptor, MaceDescriptor):
-        model_params.setdefault("descriptor", {})["config"] = (
-            persistable_checkpoint_config(descriptor.config)
+        model_params.setdefault("descriptor", {})["config"] = persistable_mace_config(
+            descriptor.config,
         )
+    if isinstance(descriptor, MatterSimDescriptor):
+        descriptor_params = model_params.setdefault("descriptor", {})
+        descriptor_params["config"] = persistable_mattersim_config(descriptor.config)
+        # Native pickle is only for first construction; restore must not reopen it.
+        descriptor_params["model_path"] = None
     if isinstance(fitting, MaceEnergyFitting):
-        model_params.setdefault("fitting_net", {})["config"] = (
-            persistable_checkpoint_config(fitting.config)
+        model_params.setdefault("fitting_net", {})["config"] = persistable_mace_config(
+            fitting.config,
         )
+    if isinstance(fitting, MatterSimEnergyFitting):
+        fitting_params = model_params.setdefault("fitting_net", {})
+        fitting_params["config"] = persistable_mattersim_config(fitting.config)
+        fitting_params["model_path"] = None
 
 
 def _persist_mace_runtime_configs(
@@ -80,6 +94,9 @@ def _install_mace_ener_energy_atomic_model() -> None:
     )
 
     from deepmd_gnn.mace_ener import MaceEnergyFitting  # noqa: PLC0415
+    from deepmd_gnn.mattersim_ener import MatterSimEnergyFitting  # noqa: PLC0415
+
+    native_energy_fittings = (MaceEnergyFitting, MatterSimEnergyFitting)
 
     if _MACE_ENER_ATOMIC_PATCHED:
         return
@@ -93,7 +110,7 @@ def _install_mace_ener_energy_atomic_model() -> None:
         type_map: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
-        if isinstance(fitting, MaceEnergyFitting):
+        if isinstance(fitting, native_energy_fittings):
             DPAtomicModel.__init__(self, descriptor, fitting, type_map, **kwargs)
             return
         original_init(self, descriptor, fitting, type_map, **kwargs)
@@ -105,8 +122,8 @@ def _install_mace_ener_energy_atomic_model() -> None:
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
     ) -> None:
-        """Keep pretrained MACE e0; do not LS-fit a second vacuum energy."""
-        if isinstance(self.fitting_net, MaceEnergyFitting):
+        """Keep pretrained native e0; do not LS-fit a second vacuum energy."""
+        if isinstance(self.fitting_net, native_energy_fittings):
             return
         original_out_stat(self, *args, **kwargs)
 
@@ -122,7 +139,7 @@ def _install_mace_ener_energy_atomic_model() -> None:
         if (
             not isinstance(
                 self.fitting_net,
-                MaceEnergyFitting,
+                native_energy_fittings,
             )
             or bias_adjust_mode == "change-by-statistic"
         ):
@@ -149,6 +166,26 @@ def _install_mace_ener_energy_atomic_model() -> None:
                 intensive=self.get_intensive(),
             )
             if "energy" not in bias_out:
+                return
+            if isinstance(self.fitting_net, MatterSimEnergyFitting):
+                import torch  # noqa: PLC0415
+
+                shift = self.fitting_net.head.normalizer.shift
+                z = torch.tensor(
+                    self.fitting_net.type_to_z,
+                    dtype=torch.int64,
+                    device=shift.device,
+                )
+                updated = shift.clone()
+                updated[z] = (
+                    bias_out["energy"]
+                    .reshape(-1)
+                    .to(
+                        dtype=shift.dtype,
+                        device=shift.device,
+                    )
+                )
+                shift.copy_(updated)
                 return
             energies = self.fitting_net.head.atomic_energies_fn.atomic_energies
             energies.copy_(
@@ -179,7 +216,7 @@ def _install_mace_ener_standard_model() -> None:
 
     def get_standard_model_with_mace_ener(model_params: dict[str, Any]) -> Any:  # noqa: ANN401
         fitting_type = (model_params.get("fitting_net") or {}).get("type", "ener")
-        if fitting_type != "mace_ener":
+        if fitting_type not in {"mace_ener", "mattersim_ener"}:
             return original(model_params)
         model_params_old = model_params
         model_params = copy.deepcopy(model_params)
@@ -229,13 +266,11 @@ def _install_mace_ener_model_wrapper() -> None:
 
     def init_with_mace_configs(
         self: Any,  # noqa: ANN401
-        model: Any,  # noqa: ANN401
-        loss: Any = None,  # noqa: ANN401
-        model_params: dict[str, Any] | None = None,
-        shared_links: dict[str, Any] | None = None,
-        modifier: Any = None,  # noqa: ANN401
+        *args: Any,  # noqa: ANN401
+        **kwargs: Any,  # noqa: ANN401
     ) -> None:
-        original_init(self, model, loss, model_params, shared_links, modifier)
+        # DeePMD 3.1 ModelWrapper has no modifier; 3.2+ does. Forward as-is.
+        original_init(self, *args, **kwargs)
         _persist_mace_runtime_configs(self.model, self.model_params)
 
     def extra_state_with_mace_configs(self: Any) -> dict[str, Any]:  # noqa: ANN401
@@ -262,6 +297,9 @@ def _register() -> None:
     )
 
     import deepmd_gnn.mace_descriptor  # noqa: PLC0415
+    import deepmd_gnn.mace_ener  # noqa: PLC0415
+    import deepmd_gnn.mattersim_descriptor  # noqa: PLC0415
+    import deepmd_gnn.mattersim_ener  # noqa: PLC0415
     import deepmd_gnn.nequip_descriptor  # noqa: PLC0415
 
     with contextlib.suppress(ImportError):

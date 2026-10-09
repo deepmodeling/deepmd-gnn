@@ -12,6 +12,7 @@ Supported packages and models include:
 - [MACE](https://github.com/ACEsuit/mace) (PyTorch version)
 - [NequIP](https://github.com/mir-group/nequip) (PyTorch version)
 - [SevenNet](https://github.com/MDIL-SNU/SevenNet) (property descriptor, optional extra)
+- [MatterSim](https://github.com/microsoft/mattersim) (property descriptor, optional extra)
 
 After [installing the plugin](#installation), you can train the GNN models using DeePMD-kit, run active learning cycles for the GNN models using [DP-GEN](https://github.com/deepmodeling/dpgen), and perform simulations with MACE and NequIP models using molecular dynamic packages supported by DeePMD-kit, such as [LAMMPS](https://github.com/lammps/lammps) and [AMBER](https://ambermd.org/).
 You can follow [DeePMD-kit documentation](https://docs.deepmodeling.com/projects/deepmd/en/latest/) to train the GNN models using its PyTorch backend, after using the specific [model parameters](#parameters).
@@ -520,6 +521,98 @@ checkpoint `chemical_species` list exactly, including unused elements.
 
 An example input is under [examples/property/sevennet](examples/property/sevennet).
 
+### MatterSim property descriptor
+
+MatterSim-v1 is wired as a **property descriptor**, not as a standalone energy
+model for LAMMPS/MPI. The M3GNet backbone stays trainable and is composed with
+DeePMD-kit's standard `PropertyFittingNet`. The original GatedMLP energy
+readout and `AtomScaling` head are dropped from the descriptor and restored
+only by `mattersim_ener`. Install the optional extra first
+(Python 3.12+; MatterSim also pulls `e3nn>=0.5`, so use a separate environment
+from MACE stacks that pin `e3nn` 0.4):
+
+```sh
+pip install "deepmd-gnn[mattersim]"
+```
+
+This path supports local MatterSim M3GNet checkpoints and the pretrained
+keywords `mattersim-v1.0.0-1m` / `mattersim-v1.0.0-5m`. It does **not** support
+Graphormer checkpoints, LAMMPS, or TorchScript export of the official M3GNet
+layers (`dp --pt train` and property evaluation stay eager). `type_map` is the DeePMD model element list (real
+element symbols); MatterSim embeds nuclear charge, so the list does not have to
+match a checkpoint species ordering. `sel` must be large enough for the pair
+cutoff stored in the checkpoint (5 Å for the public MatterSim-v1 weights).
+
+```json
+"model": {
+  "type": "standard",
+  "type_map": ["H", "O"],
+  "descriptor": {
+    "type": "mattersim",
+    "model_path": "./trusted_mattersim_m3gnet.pth",
+    "sel": 64,
+    "trainable": true
+  },
+  "fitting_net": {
+    "type": "property",
+    "property_name": "band_gap",
+    "task_dim": 1,
+    "intensive": true,
+    "neuron": [128, 128]
+  }
+}
+```
+
+The same descriptor can also keep the original M3GNet energy head as a DeePMD
+fitting (`mattersim_ener`) and share the backbone with a property branch. This
+is the DPA-style workflow: one pretrained GNN, the native GatedMLP plus
+`AtomScaling` readout on energy data, and `PropertyFittingNet` on last-layer
+`atom_attr`. It is not a second MLP on the property features, and it does not
+add a LAMMPS `type: mattersim` energy model. See
+[`examples/property/mattersim/input_multitask.json`](examples/property/mattersim/input_multitask.json):
+
+```json
+"model": {
+  "shared_dict": {
+    "type_map": ["H", "O"],
+    "mattersim_descriptor": {
+      "type": "mattersim",
+      "model_path": "./trusted_mattersim_m3gnet.pth",
+      "sel": 64,
+      "trainable": true
+    }
+  },
+  "model_dict": {
+    "force_field": {
+      "type_map": "type_map",
+      "descriptor": "mattersim_descriptor",
+      "fitting_net": {
+        "type": "mattersim_ener",
+        "model_path": "./trusted_mattersim_m3gnet.pth"
+      }
+    },
+    "band_gap": {
+      "type_map": "type_map",
+      "descriptor": "mattersim_descriptor",
+      "fitting_net": {
+        "type": "property",
+        "property_name": "band_gap",
+        "task_dim": 1,
+        "intensive": true
+      }
+    }
+  }
+}
+```
+
+Set `intensive: true` on the property fitting when labels are per-structure
+(for example band gaps). After `share_params` level 0 the two branches use the
+same backbone object; energy readouts stay only on `mattersim_ener`. Energy data
+and property data are listed separately under `training.data_dict`.
+
+An example property-only input is under
+[examples/property/mattersim](examples/property/mattersim).
+
 ## DPRc support
 
 In `deepmd-gnn`, the GNN model can be used in a [DPRc](https://docs.deepmodeling.com/projects/deepmd/en/latest/model/dprc.html) way.
@@ -568,3 +661,4 @@ about (for example in LAMMPS or AMBER).
 - [examples/property/mace](examples/property/mace)
 - [examples/property/nequip](examples/property/nequip)
 - [examples/property/sevennet](examples/property/sevennet)
+- [examples/property/mattersim](examples/property/mattersim)

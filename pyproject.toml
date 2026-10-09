@@ -70,6 +70,9 @@ sevennet = [
     "sevenn>=0.11",
     "e3nn>=0.5",
 ]
+mattersim = [
+    "mattersim",
+]
 test = [
     'pytest',
     'pytest-cov',
