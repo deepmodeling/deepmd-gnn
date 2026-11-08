@@ -293,14 +293,6 @@ def _load_mace_checkpoint(model_path: Path, device: str) -> ScaleShiftMACE:
     return load_native_mace_checkpoint(model_path, device=device)
 
 
-def _validate_load_result(load_result: object) -> None:
-    from deepmd_gnn.mace_checkpoint import (  # noqa: PLC0415
-        validate_mace_state_dict_load,
-    )
-
-    validate_mace_state_dict_load(load_result)
-
-
 def load_mace_off_model(
     model_name: str | None = "small",
     *,
@@ -373,11 +365,10 @@ def load_mace_off_model(
             avg_num_neighbors=config["avg_num_neighbors"],
         )
 
-    load_result = deepmd_model.model.load_state_dict(
-        mace_model.state_dict(),
-        strict=False,
-    )
-    _validate_load_result(load_result)
+    # The reconstructed network only initializes wrapper metadata. Official
+    # MACE-OFF checkpoints may use contraction bases that cannot be inferred
+    # from public attributes, so loading their state into that temporary
+    # network can fail even though the original checkpoint is fully usable.
     deepmd_model.model = mace_model
     deepmd_model.eval()
     return deepmd_model
