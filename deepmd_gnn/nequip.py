@@ -60,6 +60,10 @@ from deepmd_gnn.autograd import derive_atomic_virial_from_displacement
 from deepmd_gnn.deepmd_ops import ensure_border_op_placeholder
 from deepmd_gnn.edge import dense_edge_index
 from deepmd_gnn.export import pad_nlist_for_export as _pad_nlist_for_export
+from deepmd_gnn.precision import (
+    dtype_from_precision,
+    temporary_default_dtype,
+)
 from deepmd_gnn.stat_compat import load_observed_type_stat_compat
 
 ensure_border_op_placeholder()
@@ -149,33 +153,37 @@ def _insert_border_communication_modules(model: GraphModel, num_layers: int) -> 
 
 
 def _make_nequip_network(params: dict[str, Any], ntypes: int) -> GraphModel:
-    nequip_model = model_from_config(
-        {
-            "model_builders": ["EnergyModel"],
-            "avg_num_neighbors": params["sel"],
-            "chemical_symbols": params["type_map"],
-            "num_types": ntypes,
-            "r_max": params["r_max"],
-            "num_layers": params["num_layers"],
-            "l_max": params["l_max"],
-            "num_features": params["num_features"],
-            "nonlinearity_type": params["nonlinearity_type"],
-            "parity": params["parity"],
-            "num_basis": params["num_basis"],
-            "BesselBasis_trainable": params["BesselBasis_trainable"],
-            "PolynomialCutoff_p": params["PolynomialCutoff_p"],
-            "invariant_layers": params["invariant_layers"],
-            "invariant_neurons": params["invariant_neurons"],
-            "use_sc": params["use_sc"],
-            "irreps_edge_sh": params["irreps_edge_sh"],
-            "feature_irreps_hidden": params["feature_irreps_hidden"],
-            "chemical_embedding_irreps_out": params["chemical_embedding_irreps_out"],
-            "conv_to_output_hidden_irreps_out": params[
-                "conv_to_output_hidden_irreps_out"
-            ],
-            "model_dtype": params["precision"],
-        },
-    )
+    model_dtype = dtype_from_precision(params["precision"])
+    with temporary_default_dtype(model_dtype):
+        nequip_model = model_from_config(
+            {
+                "model_builders": ["EnergyModel"],
+                "avg_num_neighbors": params["sel"],
+                "chemical_symbols": params["type_map"],
+                "num_types": ntypes,
+                "r_max": params["r_max"],
+                "num_layers": params["num_layers"],
+                "l_max": params["l_max"],
+                "num_features": params["num_features"],
+                "nonlinearity_type": params["nonlinearity_type"],
+                "parity": params["parity"],
+                "num_basis": params["num_basis"],
+                "BesselBasis_trainable": params["BesselBasis_trainable"],
+                "PolynomialCutoff_p": params["PolynomialCutoff_p"],
+                "invariant_layers": params["invariant_layers"],
+                "invariant_neurons": params["invariant_neurons"],
+                "use_sc": params["use_sc"],
+                "irreps_edge_sh": params["irreps_edge_sh"],
+                "feature_irreps_hidden": params["feature_irreps_hidden"],
+                "chemical_embedding_irreps_out": params[
+                    "chemical_embedding_irreps_out"
+                ],
+                "conv_to_output_hidden_irreps_out": params[
+                    "conv_to_output_hidden_irreps_out"
+                ],
+                "model_dtype": params["precision"],
+            },
+        )
     _insert_border_communication_modules(nequip_model, params["num_layers"])
     return nequip_model
 
